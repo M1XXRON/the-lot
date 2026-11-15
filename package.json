@@ -1,0 +1,26 @@
+{
+  "name": "the-lot",
+  "version": "1.0.0",
+  "description": "The Lot — a two-player draft house (Bun + Datastar)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun run server.ts",
+    "dev": "bun --watch run server.ts",
+    "check": "tsc --noEmit",
+    "fmt": "bunx prettier --write 'src/**/*.{ts,js}' server.ts tools/*.mjs test/*.mjs 2>/dev/null || true",
+    "test": "bun test/sim-bun.mjs",
+    "test:http": "bun tools/http-e2e.mjs",
+    "test:ui": "bun tools/ui-e2e.mjs",
+    "verify": "bun tools/verify.mjs",
+    "shots": "bun tools/shot.mjs",
+    "sim": "bun tools/balance-sim.mjs",
+    "build": "bun build ./server.ts --compile --bytecode --target=bun-linux-x64 --outfile dist/lot",
+    "build:local": "bun build ./server.ts --compile --bytecode --outfile dist/lot-local",
+    "start:bin": "./dist/lot"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^5.9.3"
+  }
+}

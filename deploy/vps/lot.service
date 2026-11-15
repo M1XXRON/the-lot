@@ -1,0 +1,34 @@
+[Unit]
+Description=The Lot — two-player draft house (Bun binary)
+Documentation=https://lot.bunker9.lol
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=lot
+Group=lot
+WorkingDirectory=/opt/lot/app
+Environment=NODE_ENV=production
+Environment=PORT=3102
+Environment=HOST=127.0.0.1
+Environment=LOT_DB=/opt/lot/app/data/lot.db
+Environment=LOT_ROOT=/opt/lot/app
+EnvironmentFile=/opt/lot/app/.env
+ExecStart=/opt/lot/app/dist/lot
+Restart=always
+RestartSec=3
+SyslogIdentifier=lot
+
+# Сервис пишет только в data/: остальное — read-only.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/lot/app/data
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target

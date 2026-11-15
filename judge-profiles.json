@@ -1,0 +1,49 @@
+{
+  "version": 1,
+  "characterPower": [
+    "anime-characters",
+    "anime-villains",
+    "anime-protagonists",
+    "anime-duos",
+    "anime-fights",
+    "anime-deaths",
+    "nsy-anime-draft",
+    "nsy-fiction-draft",
+    "nsy-cartoon-draft",
+    "superheroes",
+    "cartoon-characters",
+    "movie-characters",
+    "hot-spiderman-characters",
+    "hot-spiderman-villains",
+    "hot-odyssey-gods",
+    "fortnite-skins",
+    "minecraft-mobs",
+    "valorant-agents",
+    "pokemon",
+    "pokemon-starters",
+    "clash-royale-cards",
+    "brawl-stars-brawlers",
+    "mario-characters",
+    "iconic-duos"
+  ],
+  "athleteRatings": [
+    "soccer-duos",
+    "all-time-soccer-players",
+    "current-soccer-players",
+    "ufc-fighters",
+    "all-time-basketball-players",
+    "current-basketball-players",
+    "all-time-baseball-players",
+    "current-baseball-players",
+    "all-time-football-players",
+    "current-football-players",
+    "all-time-hockey-players",
+    "current-hockey-players"
+  ],
+  "internetRatings": {
+    "popular-movies": "movie",
+    "kids-movies": "movie",
+    "film-classics": "movie",
+    "tv-shows": "tv"
+  }
+}

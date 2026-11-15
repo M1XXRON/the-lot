@@ -1,0 +1,363 @@
+@layer redesign;
+
+@layer redesign {
+  /* ── Лендинг: два симметричных аукционных билета ───── */
+  .entry-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+    gap: 0.85rem;
+    inline-size: 100%;
+  }
+
+  .entry-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.7rem;
+    padding: 1.25rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-sm);
+    background: var(--paper-raised);
+    box-shadow: inset 0 2px 0 var(--brass), var(--shadow-card);
+  }
+
+  .entry-card:nth-child(2) {
+    box-shadow: inset 0 2px 0 var(--ink), var(--shadow-card);
+  }
+
+  .entry-card > .eyebrow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    color: var(--brass-ink);
+  }
+
+  .entry-card:first-child > .eyebrow::after {
+    content: "LOT I";
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.14em;
+  }
+
+  .entry-card:nth-child(2) > .eyebrow::after {
+    content: "LOT II";
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    letter-spacing: 0.14em;
+  }
+
+  .entry-card h2 {
+    padding-block-end: 0.5rem;
+    border-block-end: 1px solid var(--rule);
+    font-family: var(--font-display);
+    font-size: clamp(1.3rem, 3.2vw, 1.6rem);
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+
+  .entry-hint {
+    color: var(--ink-soft);
+    font-family: var(--font-display);
+    font-style: italic;
+    font-size: 0.86rem;
+    line-height: 1.45;
+  }
+
+  .entry-card .primary-button,
+  .entry-card .secondary-button {
+    inline-size: 100%;
+    min-block-size: 3.1rem;
+    margin-block-start: auto;
+    font-size: 0.72rem;
+  }
+
+  .field {
+    display: grid;
+    gap: 0.35rem;
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+  }
+
+  .field input {
+    min-block-size: 2.85rem;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-xs);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-display);
+    font-size: 1.04rem;
+    letter-spacing: normal;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+
+  .field input::placeholder { color: var(--faint); }
+  .field input:hover { border-color: var(--ink); }
+  .field input:focus-visible { background: #fffdf8; outline: 2px solid var(--brass-ink); outline-offset: 2px; }
+
+  .local-form {
+    display: flex;
+    justify-content: center;
+    inline-size: 100%;
+  }
+
+  .link-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    inline-size: 100%;
+    min-block-size: 3rem;
+    padding: 0.55rem 1rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-sm);
+    background: rgb(252 249 242 / 70%);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    transition: border-color 0.16s ease, background-color 0.16s ease, color 0.16s ease;
+  }
+
+  .link-button::before {
+    padding: 0.15rem 0.45rem;
+    border: 1px solid var(--brass-ink);
+    border-radius: var(--r-xs);
+    color: var(--brass-ink);
+    content: "PASS-AND-PLAY";
+    font-size: 0.6rem;
+    letter-spacing: 0.12em;
+  }
+
+  .link-button:hover {
+    border-color: var(--ink);
+    background: var(--paper-raised);
+    color: var(--brass-ink);
+  }
+
+  /* ── Лобби: приглашение и места ─────────────────────── */
+  .bar-actions { display: flex; gap: 0.4rem; }
+  .lang-switch { display: flex; margin: 0; }
+  .lang-button {
+    font-family: var(--font-mono);
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+  }
+  .top-actions .lang-switch { display: flex; }
+  .top-actions .lang-button { inline-size: 2.5rem; min-inline-size: 2.5rem; min-block-size: 2.5rem; }
+
+  [data-sound-toggle][data-sound-state="off"] { opacity: 0.5; }
+  [data-sound-toggle][data-sound-state="on"] { opacity: 1; }
+  .bar-actions .icon-button { inline-size: 2.75rem; min-inline-size: 44px; min-block-size: 44px; font-size: 0.92rem; }
+
+  .invite-card {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    inline-size: 100%;
+    margin-block-end: 0.7rem;
+    padding: 0.65rem 0.9rem;
+    border: 1px solid var(--rule-strong);
+    border-inline-start: 4px solid var(--brass-ink);
+    border-radius: var(--r-sm);
+    background: var(--paper-raised);
+    box-shadow: var(--shadow-card);
+  }
+
+  .invite-mark {
+    color: var(--brass-ink);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.16em;
+  }
+
+  .invite-code {
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--rule);
+    border-radius: var(--r-xs);
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 1.05rem;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 0.2em;
+  }
+
+  .invite-card .text-button { margin-inline-start: auto; }
+
+  .invite-seat {
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-xs);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+  }
+
+  .invite-seat.is-full {
+    border-color: rgb(36 82 69 / 45%);
+    background: rgb(36 82 69 / 8%);
+    color: var(--forest);
+  }
+
+  .invite-card--local {
+    flex-wrap: wrap;
+    border-inline-start-color: var(--ink);
+  }
+
+  .invite-note { flex: 1 1 14rem; color: var(--ink-soft); font-size: 0.78rem; line-height: 1.45; }
+
+  .seat-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem;
+    margin-block-end: 0.6rem;
+  }
+
+  .seat-pill {
+    padding: 0.25rem 0.6rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-xs);
+    background: var(--paper);
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .seat-pill.is-on { border-color: var(--ink); color: var(--ink); }
+  .seat-pill.is-on::before { content: "●"; margin-inline-end: 0.35rem; color: var(--forest); font-size: 0.58rem; }
+  .seat-vs { color: var(--muted); font-family: var(--font-display); font-style: italic; font-size: 0.9rem; }
+  .seat-hint {
+    margin-inline-start: auto;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    letter-spacing: 0.06em;
+  }
+
+  .judge-prompt .judge-votes { margin-block-end: 0.2rem; }
+
+  /* Свой пак: загрузка JSON */
+  .custom-pack-card {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.7rem;
+    inline-size: 100%;
+    margin-block-end: 0.7rem;
+    padding: 0.55rem 0.8rem;
+    border: 1px dashed var(--rule-strong);
+    border-radius: var(--r-sm);
+    background: rgb(252 249 242 / 55%);
+  }
+
+  .custom-pack-card.is-loaded { border-style: solid; border-color: var(--brass-ink); background: rgb(158 120 48 / 6%); }
+
+  .custom-pack-mark { color: var(--brass-ink); font-family: var(--font-mono); font-size: 0.62rem; font-weight: 700; letter-spacing: 0.14em; }
+  .custom-pack-name { font-family: var(--font-display); font-size: 1rem; }
+  .custom-pack-count { color: var(--muted); font-family: var(--font-mono); font-size: 0.64rem; }
+  .custom-pack-card .text-button { margin-inline-start: auto; }
+
+  .custom-pack-file { position: relative; display: inline-flex; align-items: center; min-block-size: 44px; }
+  .custom-pack-file input {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+    inline-size: 100%;
+  }
+  .custom-pack-file span {
+    padding: 0.45rem 0.75rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-xs);
+    background: var(--paper-raised);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+  }
+  .custom-pack-file:hover span { border-color: var(--ink); }
+  .custom-pack-hint { flex: 1 1 100%; color: var(--muted); font-size: 0.64rem; line-height: 1.4; }
+
+  /* Последние вердикты на лендинге */
+  .verdicts {
+    inline-size: 100%;
+    padding-block: 0.9rem 0.2rem;
+    border-block-start: 3px double var(--rule-strong);
+  }
+
+  .verdicts h2 {
+    margin-block-end: 0.45rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.66rem;
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+  }
+
+  .verdicts ul { display: grid; gap: 0; margin: 0; padding: 0; list-style: none; }
+
+  .verdicts li {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    padding-block: 0.4rem;
+    border-block-end: 1px solid var(--rule);
+    font-size: 0.78rem;
+  }
+
+  .verdict-pack { color: var(--muted); font-family: var(--font-display); }
+  .verdict-winner { margin-inline-start: auto; font-family: var(--font-display); }
+  .verdict-score { color: var(--brass-ink); font-family: var(--font-mono); font-size: 0.68rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  .join-seat { display: grid; gap: 0.55rem; }
+  .join-seat > .eyebrow { color: var(--brass-ink); font-weight: 700; }
+  .join-seat .field { gap: 0.3rem; }
+  .join-seat .start-button { margin-block-start: 0.2rem; }
+
+  .room-foot {
+    margin-block-start: 1.4rem;
+    color: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 0.68rem;
+    letter-spacing: 0.14em;
+  }
+
+  .category-card:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  /* :hidden должен побеждать display:flex карточки */
+  .category-card[hidden] { display: none; }
+
+  /* ── Поиск пака ─────────────────────────────────────── */
+  #pack-search-wrap { margin-block: 0.05rem 0.15rem; }
+
+  @media (max-width: 680px) {
+    .entry-grid { grid-template-columns: 1fr; }
+    .entry-card { padding: 1rem; }
+    .link-button { font-size: 0.66rem; }
+    .invite-card { flex-wrap: wrap; gap: 0.45rem; margin-block-end: 0.45rem; padding: 0.45rem 0.65rem; }
+    .invite-note { font-size: 0.72rem; line-height: 1.35; }
+    .invite-seat { margin-inline-start: auto; }
+    .seat-line { gap: 0.35rem; margin-block-end: 0.4rem; }
+    .seat-pill { padding: 0.18rem 0.48rem; font-size: 0.62rem; }
+    .seat-hint { font-size: 0.6rem; }
+  }
+}
