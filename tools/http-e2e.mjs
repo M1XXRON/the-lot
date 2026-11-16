@@ -73,6 +73,31 @@ const imageSource = Bun.serve({
     if (url.pathname === "/redirect") return new Response(null, { status: 302, headers: { location: "/cover2.png" } });
     if (url.pathname === "/text") return new Response("not an image at all", { headers: { "content-type": "image/png" } });
     if (url.pathname === "/big") return new Response(new Uint8Array(7 * 1024 * 1024), { headers: { "content-type": "image/png" } });
+    if (url.pathname === "/anilist") {
+      const body = {
+        data: {
+          Character: {
+            name: { full: "Soda" },
+            image: { large: `${IMAGE_BASE}/cover2.png` },
+            siteUrl: "https://anilist.co/character/1",
+          },
+        },
+      };
+      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    }
+    if (url.pathname.endsWith("/w/api.php")) {
+      const body = {
+        query: {
+          pages: [
+            {
+              title: "Soda",
+              thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 },
+            },
+          ],
+        },
+      };
+      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    }
     if (url.pathname === "/commons") {
       const body = {
         query: {
@@ -448,7 +473,42 @@ async function coverSearch(server) {
   return { code };
 }
 
-/** Постер лота в любом паке: поиск по названию, плашка, подпись, снятие. */
+/** Картинки появляются сами, как только объявлен лот: ни поиска, ни клика. */
+async function autoPictures(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  await host.actJson("pack", { pack: "free-soda" });
+  await host.act("toss");
+  await host.act("begin");
+
+  let page = "";
+  let plate = "";
+  for (let i = 0; i < 60; i += 1) {
+    page = (await host.html(`/r/${code}`)).html;
+    plate = page.match(/lot-plate--photo"><img src="(\/img\/x\/[a-f0-9]{24}-342\.webp)"/)?.[1] ?? "";
+    if (plate) break;
+    await Bun.sleep(100);
+  }
+  assert(plate, "картинка лота не появилась сама");
+  assert(/Фото: (Википедия|Wikipedia)/.test(page), "нет подписи к авто-картинке");
+  assert(page.includes('data-image="'), "кнопка не видит авто-картинку");
+  const image = await fetch(`${server.base}${plate}`);
+  assert(image.status === 200, `авто-постер вернул ${image.status}`);
+  assert((image.headers.get("content-type") ?? "") === "image/webp", "авто-постер не webp");
+
+  // следующий стол с тем же паком отдаёт картинку из кеша сразу
+  const second = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code: fresh } = roomCodeFrom(second);
+  await host.actJson("pack", { pack: "free-soda" });
+  await host.act("toss");
+  await host.act("begin");
+  const freshPage = (await host.html(`/r/${fresh}`)).html;
+  assert(/lot-plate--photo"><img src="\/img\/x\//.test(freshPage), "кеш не отдал картинку сразу");
+  return { code: fresh };
+}
+
+/** Постер лота вручную: поиск по названию, плашка, подпись, снятие. */
 async function lotImage(server) {
   const host = client(server.base);
   const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
@@ -460,7 +520,16 @@ async function lotImage(server) {
   let page = await host.html(`/r/${code}`);
   const lot = page.html.match(/id="auction-title"[^>]*>([^<]+)</)?.[1]?.trim();
   assert(lot, "у торгов нет названия лота");
-  assert(/lot-plate--\d/.test(page.html), "у лота нет гравированной плашки по умолчанию");
+
+  // ждём авто-постер: он тоже приходит сам, ручной должен его перекрыть
+  let autoHash = "";
+  for (let i = 0; i < 80; i += 1) {
+    page = await host.html(`/r/${code}`);
+    autoHash = page.html.match(/lot-plate--photo"><img src="\/img\/x\/([a-f0-9]{24})-342\.webp"/)?.[1] ?? "";
+    if (autoHash) break;
+    await Bun.sleep(100);
+  }
+  assert(autoHash, "авто-постер не появился перед ручной правкой");
 
   const found = await host.actJson("lot-find", { q: lot });
   assert(found.status === 200, `поиск постера вернул ${found.status}`);
@@ -478,17 +547,25 @@ async function lotImage(server) {
   assert(applied.status === 303, `постер лота вернул ${applied.status}`);
 
   page = await host.html(`/r/${code}`);
-  assert(/lot-plate--photo"><img src="\/img\/x\/[a-f0-9]{24}-342\.webp"/.test(page.html), "постер не встал на плашку лота");
+  const manual = page.html.match(/lot-plate--photo"><img src="(\/img\/x\/[a-f0-9]{24})-342\.webp"/)?.[1];
+  assert(manual, "постер не встал на плашку лота");
   assert(page.html.includes("Фото: Jane Doe · CC BY-SA 4.0"), "нет подписи к постеру лота");
-  assert(page.html.includes('data-image="'), "кнопка картинки потеряла текущий постер");
+  assert(page.html.includes(`data-image="${manual.slice("/img/x/".length)}"`), "кнопка картинки потеряла текущий постер");
 
   const again = await host.html(`/r/${code}`);
   assert(again.html.includes("Фото: Jane Doe"), "подпись пропала при повторной загрузке");
 
   const cleared = await host.form("/act/lot-clear", { item: lot });
   assert(cleared.status === 303, "сброс постера лота не сработал");
-  page = await host.html(`/r/${code}`);
-  assert(!/lot-plate--photo"/.test(page.html), "постер лота не снялся");
+  let back = "";
+  for (let i = 0; i < 40; i += 1) {
+    page = await host.html(`/r/${code}`);
+    back = page.html.match(/lot-plate--photo"><img src="\/img\/x\/([a-f0-9]{24})-342\.webp"/)?.[1] ?? "";
+    if (back === autoHash) break;
+    await Bun.sleep(100);
+  }
+  assert(!page.html.includes("Фото: Jane Doe"), "ручная подпись осталась после снятия");
+  assert(back === autoHash, "после снятия не вернулась авто-картинка");
   return { code };
 }
 
@@ -619,6 +696,9 @@ const server = await startServer({
     LOT_IMAGE_ALLOW_LOCAL: "1",
     LOT_IMAGES: "/tmp/lot-e2e-images",
     LOT_COMMONS_API: `${IMAGE_BASE}/commons`,
+    LOT_WIKI_API: `${IMAGE_BASE}/{lang}/w/api.php`,
+    LOT_AUTO_IMAGES: "1",
+    LOT_ANILIST_API: `${IMAGE_BASE}/anilist`,
   },
 });
 let failures = 0;
@@ -626,6 +706,7 @@ const checks = [
   ["pack cover", () => packCover(server)],
   ["cover search", () => coverSearch(server)],
   ["item pictures", () => itemPictures(server)],
+  ["auto pictures", () => autoPictures(server)],
   ["lot image", () => lotImage(server)],
   ["local game", () => playLocal(server)],
   ["online game", () => playOnline(server)],

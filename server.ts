@@ -554,6 +554,240 @@ async function findCovers(query: string): Promise<CoverCandidate[]> {
   return ready;
 }
 
+/* ── авто-картинки предметов: ищем без участия игрока ── */
+
+const WIKI_API = process.env.LOT_WIKI_API ?? "https://{lang}.wikipedia.org/w/api.php";
+const ANILIST_API = process.env.LOT_ANILIST_API ?? "https://graphql.anilist.co";
+/** Авто-картинки можно выключить (e2e без сети): LOT_AUTO_IMAGES=0. */
+const AUTO_ENABLED = process.env.LOT_AUTO_IMAGES !== "0";
+const AUTO_MISS_TTL = 30 * 24 * 60 * 60 * 1000;
+const AUTO_CONCURRENCY = 3;
+/** @type {Map<string, Promise<string | null>>} */
+const autoInflight = new Map();
+/** Общий потолок обращений к Википедии: комнат может быть много. */
+let autoSlots = 6;
+const autoWaiters: (() => void)[] = [];
+const autoWaitersHigh: (() => void)[] = [];
+
+async function autoSlot<T>(run: () => Promise<T>, high = false): Promise<T> {
+  if (autoSlots <= 0) await new Promise<void>((resolve) => (high ? autoWaitersHigh : autoWaiters).push(resolve));
+  autoSlots -= 1;
+  try {
+    return await run();
+  } finally {
+    autoSlots += 1;
+    (autoWaitersHigh.shift() ?? autoWaiters.shift())?.();
+  }
+}
+
+function autoKey(name: string) {
+  return name.toLowerCase().replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+/** Аниме-персонажи: официальный арт из AniList (Википедия несвободные картинки не отдаёт). */
+let anilistChain: Promise<void> = Promise.resolve();
+
+/** AniList держит 90 запросов в минуту — пропускаем не чаще одного в 450 мс. */
+function anilistTick() {
+  const wait = anilistChain.then(() => new Promise<void>((resolve) => setTimeout(resolve, 700)));
+  anilistChain = wait;
+  return wait;
+}
+
+function tokensOf(value: string) {
+  return value
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} ]/gu, " ")
+    .split(/\s+/)
+    .filter((token) => token.length >= 3);
+}
+
+async function anilistPicture(name: string) {
+  const query = name.replace(/\s+vs\.?\s+.*$/i, "").replace(/["'’]/g, "").trim().slice(0, 80);
+  if (!query) return null;
+  await anilistTick();
+  const response = await fetch(ANILIST_API, {
+    method: "POST",
+    headers: { "content-type": "application/json", accept: "application/json", "user-agent": IMAGE_UA },
+    body: JSON.stringify({
+      query: "query($q:String){Character(search:$q){name{full} image{large} siteUrl}}",
+      variables: { q: query },
+    }),
+    signal: AbortSignal.timeout(7000),
+  }).catch(() => null);
+  if (!response?.ok) return null;
+  const body: any = await response.json().catch(() => null);
+  const character = body?.data?.Character;
+  if (!character?.image?.large) return null;
+  const wanted = tokensOf(query);
+  const got = tokensOf(String(character.name?.full ?? ""));
+  if (!wanted.some((token) => got.includes(token))) return null;
+  return {
+    url: String(character.image.large),
+    license: "AniList",
+    page: String(character.siteUrl ?? "https://anilist.co"),
+  };
+}
+
+/** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
+async function wikiPicture(name: string) {
+  for (const lang of ["ru", "en"]) {
+    const url = new URL(WIKI_API.replace("{lang}", lang));
+    url.searchParams.set("action", "query");
+    url.searchParams.set("generator", "search");
+    url.searchParams.set("gsrsearch", name);
+    url.searchParams.set("gsrlimit", "1");
+    url.searchParams.set("prop", "pageimages|info");
+    url.searchParams.set("piprop", "thumbnail");
+    url.searchParams.set("pithumbsize", "400");
+    url.searchParams.set("redirects", "1");
+    url.searchParams.set("format", "json");
+    url.searchParams.set("formatversion", "2");
+    const response = await fetch(url, {
+      headers: { "user-agent": IMAGE_UA, accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    }).catch(() => null);
+    if (!response?.ok) continue;
+    const body: any = await response.json().catch(() => null);
+    const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
+    const thumb = page?.thumbnail;
+    if (!thumb?.source) continue;
+    if (/disambiguation|значения/i.test(String(page.title ?? ""))) continue;
+    if (Number(thumb.width ?? 0) > 0 && Number(thumb.width) < 180) continue;
+    return {
+      url: String(thumb.source),
+      license: lang === "ru" ? "Википедия" : "Wikipedia",
+      page: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(page.title ?? name).replace(/ /g, "_"))}`,
+    };
+  }
+  return null;
+}
+
+/**
+ * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
+ * кешируется, поэтому пак прогревается один раз на всех игроков.
+ */
+async function resolveItemPicture(name: string, anime = false, high = false): Promise<string | null> {
+  if (!AUTO_ENABLED) return null;
+  const key = autoKey(name);
+  if (!key) return null;
+  const cached = store.autoImage(key);
+  if (cached) return cached;
+  if (store.autoMissed(key, AUTO_MISS_TTL)) return null;
+  const running = autoInflight.get(key);
+  if (running) return running;
+
+  const job = autoSlot(async () => {
+    try {
+      const animeArt = anime ? await anilistPicture(name).catch(() => null) : null;
+      if (animeArt) {
+        const image = await ingestImage(animeArt.url, "item", { license: animeArt.license, page: animeArt.page });
+        store.saveAutoImage(key, image.hash);
+        return image.hash;
+      }
+      const wiki = await wikiPicture(name).catch(() => null);
+      if (wiki) {
+        const image = await ingestImage(wiki.url, "item", { license: wiki.license, page: wiki.page });
+        store.saveAutoImage(key, image.hash);
+        return image.hash;
+      }
+      const commons = (await commonsCandidates(name).catch(() => []))[0];
+      if (!commons) {
+        store.saveAutoMiss(key);
+        return null;
+      }
+      const image = await ingestImage(commons.url, "item", {
+        author: commons.author,
+        license: commons.license,
+        page: commons.page,
+      });
+      store.saveAutoImage(key, image.hash);
+      return image.hash;
+    } catch {
+      store.saveAutoMiss(key);
+      return null;
+    } finally {
+      autoInflight.delete(key);
+    }
+  }, high);
+  autoInflight.set(key, job);
+  return job;
+}
+
+/** Подтянуть из кеша всё, что уже найдено для выбранного пака. */
+function autoFor(room: any) {
+  const pack = room.customPack ?? content.packById.get(room.packId);
+  const auto: Record<string, string> = {};
+  for (const name of pack?.items ?? []) {
+    const hash = store.autoImage(autoKey(name));
+    if (hash) auto[name] = hash;
+  }
+  room.auto = auto;
+  return auto;
+}
+
+/** Прогреваем пак заранее: к началу торгов картинки уже лежат в комнате. */
+async function prefetchPack(room: any) {
+  if (!AUTO_ENABLED) return;
+  const pack = room.customPack ?? content.packById.get(room.packId);
+  if (!pack || pack.profile === "internet-ratings") return;
+  const queue = (pack.items as string[]).filter(
+    (name) => !room.auto?.[name] && !room.items?.[pack.id]?.[name] && !store.autoMissed(autoKey(name), AUTO_MISS_TTL),
+  );
+  if (queue.length === 0) return;
+  room.prefetchQueue = queue;
+  let last = 0;
+  const worker = async () => {
+    for (;;) {
+      const name = queue.shift();
+      if (!name) return;
+      const hash = await resolveItemPicture(name, pack.tab === "ANIME");
+      if (!hash) continue;
+      room.auto = { ...(room.auto ?? {}), [name]: hash };
+      creditsFor(room);
+      if (room.phase === "auction" && Date.now() - last > 900) {
+        last = Date.now();
+        persist(room);
+        broadcast(room, "full");
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: AUTO_CONCURRENCY }, worker));
+  if (room.prefetchQueue === queue) room.prefetchQueue = null;
+  if (room.phase === "auction") {
+    persist(room);
+    broadcast(room, "full");
+  }
+}
+
+/** Пак выбирают кликами — прогреваем только после паузы. */
+function schedulePrefetch(room: any, delay = 1500) {
+  if (!AUTO_ENABLED) return;
+  clearTimeout(room.prefetchTimer);
+  room.prefetchTimer = setTimeout(() => {
+    room.prefetchTimer = null;
+    void prefetchPack(room);
+  }, delay);
+  room.prefetchTimer?.unref?.();
+}
+
+/** Текущий лот важнее остальных: если картинки нет, ищем именно его. */
+async function ensureLotPicture(room: any) {
+  if (!AUTO_ENABLED || room.phase !== "auction") return;
+  const pack = room.customPack ?? content.packById.get(room.packId);
+  const lot = room.lots[room.lotIndex];
+  if (!pack || !lot || pack.profile === "internet-ratings") return;
+  if (room.items?.[pack.id]?.[lot.name] || room.auto?.[lot.name] || lot.poster) return;
+  // Текущий лот — вне очереди прогрева и вне общей очереди источников.
+  if (Array.isArray(room.prefetchQueue)) room.prefetchQueue.unshift(lot.name);
+  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true);
+  if (!hash) return;
+  room.auto = { ...(room.auto ?? {}), [lot.name]: hash };
+  creditsFor(room);
+  persist(room);
+  broadcast(room, "full");
+}
+
 /** Атрибуция — обычный текст без разметки и управляющих символов. */
 function cleanCredit(value: unknown, max: number) {
   return String(value ?? "")
@@ -627,6 +861,7 @@ function creditsFor(room: any) {
   for (const pack of Object.values(room.items ?? {}) as Record<string, string>[]) {
     for (const hash of Object.values(pack)) hashes.add(hash);
   }
+  for (const hash of Object.values(room.auto ?? {}) as string[]) hashes.add(hash);
   const credits: Record<string, { author: string; license: string; page: string }> = {};
   for (const image of store.imagesByHashes([...hashes])) {
     if (!image.author && !image.license) continue;
@@ -883,6 +1118,7 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
     libraryFor(room);
     coversFor(room);
     itemsFor(room);
+    autoFor(room);
     if (mode === "local") {
       engine.fillLocalSeat(room);
       const second = langOf(request) === "en" ? "PLAYER 2" : "ИГРОК 2";
@@ -1055,7 +1291,9 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       if (!host) return fail(request, "Пак выбирает хозяин стола.", 403);
       if (lobbyOnly) return fail(request, "Драфт уже начался.", 409);
       engine.setPack(room, String(body.pack ?? ""));
+      autoFor(room);
       touch("lobby");
+      schedulePrefetch(room);
       return new Response(null, { status: 204, headers: SECURITY_HEADERS });
     }
     case "judge": {
@@ -1095,7 +1333,10 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       const result = engine.beginDraft(room);
       if (result !== "ok") return fail(request, "Сначала бросьте монету.", 409);
       touch("full");
+      clearTimeout(room.prefetchTimer);
       void ensureLotPoster(room);
+      void prefetchPack(room);
+      void ensureLotPicture(room);
       return new Response(null, { status: 204, headers: SECURITY_HEADERS });
     }
     case "step": {
@@ -1129,7 +1370,10 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
 
       persist(room);
       broadcast(room, "full");
-      if (room.phase === "auction") void ensureLotPoster(room);
+      if (room.phase === "auction") {
+        void ensureLotPoster(room);
+        void ensureLotPicture(room);
+      }
       if (room.phase === "judging") {
         room.judgeMode = "auto";
         store.saveRoom(room);
@@ -1498,6 +1742,7 @@ const server = Bun.serve({
             send(conn, frame("#room", renderRoom(initial)));
           }
           void ensureLotPoster(room);
+          void ensureLotPicture(room);
           const keepAlive = setInterval(() => send(conn, ": ping\n\n"), 20_000);
           const cleanup = () => {
             clearInterval(keepAlive);
@@ -1541,6 +1786,7 @@ const server = Bun.serve({
       libraryFor(room);
       coversFor(room);
       itemsFor(room);
+      autoFor(room);
       creditsFor(room);
       const pageView: any = engine.view(room, sid, origin);
       pageView.lang = langOf(request);
@@ -1577,6 +1823,7 @@ setInterval(async () => {
   for (const [key, bucket] of buckets) {
     if (bucket.updated < stale) buckets.delete(key);
   }
+  store.pruneAutoMisses(now - AUTO_MISS_TTL);
   // Картинки, на которые больше никто не ссылается, живут 90 дней.
   for (const hash of store.pruneImages(now - IMAGE_TTL)) {
     await unlink(join(IMAGE_DIR, `${hash}-96.webp`)).catch(() => {});

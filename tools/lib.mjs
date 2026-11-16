@@ -14,6 +14,8 @@ export async function startServer({ port, mock = true, env = {} } = {}) {
       HOST: "127.0.0.1",
       LOT_DB: join(dbDir, "lot.db"),
       LOT_MOCK: mock ? "1" : "0",
+      // Авто-картинки ходят в Википедию: в тестах по умолчанию выключены.
+      LOT_AUTO_IMAGES: "0",
       ...env,
     },
     stdout: "pipe",

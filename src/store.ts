@@ -69,6 +69,17 @@ db.exec(`
     PRIMARY KEY (owner, pack)
   );
 
+  CREATE TABLE IF NOT EXISTS auto_items (
+    name TEXT PRIMARY KEY,
+    hash TEXT NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS auto_misses (
+    name TEXT PRIMARY KEY,
+    updated_at INTEGER NOT NULL
+  );
+
   CREATE TABLE IF NOT EXISTS item_images (
     owner TEXT NOT NULL,
     pack TEXT NOT NULL,
@@ -295,9 +306,19 @@ const setItemStmt = db.prepare(
 );
 const dropItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ?");
 const dropOneItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ? AND item = ?");
+const autoItemStmt = db.prepare("SELECT hash FROM auto_items WHERE name = ?");
+const putAutoItemStmt = db.prepare(
+  "INSERT INTO auto_items (name, hash, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
+);
+const autoMissStmt = db.prepare("SELECT updated_at FROM auto_misses WHERE name = ?");
+const putAutoMissStmt = db.prepare(
+  "INSERT INTO auto_misses (name, updated_at) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at",
+);
+const dropAutoMissStmt = db.prepare("DELETE FROM auto_misses WHERE name = ?");
 const itemStmt = db.prepare("SELECT pack, item, hash FROM item_images WHERE owner = ?");
 const pruneImagesStmt = db.prepare(
-  "DELETE FROM images WHERE created_at < ? AND hash NOT IN (SELECT hash FROM pack_covers) AND hash NOT IN (SELECT hash FROM item_images) RETURNING hash",
+  "DELETE FROM images WHERE created_at < ? AND hash NOT IN (SELECT hash FROM pack_covers) " +
+    "AND hash NOT IN (SELECT hash FROM item_images) AND hash NOT IN (SELECT hash FROM auto_items) RETURNING hash",
 );
 
 /** @param {StoredImage} image */
@@ -369,10 +390,40 @@ export function packCovers(owner: string): Record<string, string> {
   return out;
 }
 
+/* ── автоматические картинки предметов: общий кеш по названию ── */
+
+/** @param {string} name @returns {string | null} */
+export function autoImage(name: string): string | null {
+  const row = autoItemStmt.get(name) as { hash: string } | null;
+  return row?.hash ?? null;
+}
+
+/** @param {string} name @param {string} hash */
+export function saveAutoImage(name: string, hash: string) {
+  putAutoItemStmt.run(name, hash, Date.now());
+  dropAutoMissStmt.run(name);
+}
+
+/** @param {string} name @param {number} ttl */
+export function autoMissed(name: string, ttl: number): boolean {
+  const row = autoMissStmt.get(name) as { updated_at: number } | null;
+  return Boolean(row && Date.now() - row.updated_at < ttl);
+}
+
+/** @param {string} name */
+export function saveAutoMiss(name: string) {
+  putAutoMissStmt.run(name, Date.now());
+}
+
 /** Удаляет картинки, на которые больше никто не ссылается. @returns {string[]} */
 export function pruneImages(olderThan: number): string[] {
   const rows = pruneImagesStmt.all(olderThan) as { hash: string }[];
   return rows.map((row) => row.hash);
+}
+
+/** @param {number} olderThan */
+export function pruneAutoMisses(olderThan: number) {
+  db.query("DELETE FROM auto_misses WHERE updated_at < ?").run(olderThan);
 }
 
 /** @param {string} sid @param {string | null} room @param {number | null} seat */

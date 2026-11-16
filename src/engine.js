@@ -465,6 +465,7 @@ export function totals(room) {
 export function view(room, sessionId, origin) {
   const pack = room.customPack ?? packOrFallback(room.packId);
   const pictures = room.items?.[pack.id] ?? {};
+  const auto = room.auto ?? {};
   const seat = sessionId ? seatOf(room, sessionId) : -1;
   const au = room.auction;
   const lot = room.lots[room.lotIndex] ?? null;
@@ -515,7 +516,7 @@ export function view(room, sessionId, origin) {
           name: pick.name,
           emoji: pick.emoji,
           poster: pick.poster ?? null,
-          image: pictures[pick.name] ?? null,
+          image: pictures[pick.name] ?? (pick.poster ? null : (auto[pick.name] ?? null)),
           price: pick.price,
           auto: pick.auto,
           rating: pick.aiRating ?? null,
@@ -544,7 +545,7 @@ export function view(room, sessionId, origin) {
             emoji: lot.emoji,
             description: lot.description,
             poster: lot.poster ?? null,
-            image: pictures[lot.name] ?? null,
+            image: pictures[lot.name] ?? (lot.poster ? null : (auto[lot.name] ?? null)),
           }
         : null,
       canBid:
