@@ -804,8 +804,14 @@ function refreshAuto(name: string, hash: string | null) {
       room.auto = next;
     }
     creditsFor(room);
-    persist(room);
-    broadcast(room, "full");
+    // Патч нужен только если этот предмет сейчас на экране: иначе молча копим.
+    const onScreen = room.phase === "auction" && room.lots?.[room.lotIndex]?.name === name;
+    if (onScreen) {
+      persist(room);
+      broadcast(room, "full");
+    } else {
+      store.saveRoom(room);
+    }
   }
 }
 
@@ -925,7 +931,6 @@ async function prefetchPack(room: any) {
   );
   if (queue.length === 0) return;
   room.prefetchQueue = queue;
-  let last = 0;
   const worker = async () => {
     for (;;) {
       const name = queue.shift();
@@ -934,19 +939,17 @@ async function prefetchPack(room: any) {
       if (!hash) continue;
       room.auto = { ...(room.auto ?? {}), [name]: hash };
       creditsFor(room);
-      if (room.phase === "auction" && Date.now() - last > 900) {
-        last = Date.now();
+      // Каталог и будущие лоты не перерисовываем: экран трогаем только ради текущего лота.
+      if (room.phase === "auction" && room.lots?.[room.lotIndex]?.name === name) {
         persist(room);
         broadcast(room, "full");
+      } else {
+        store.saveRoom(room);
       }
     }
   };
   await Promise.all(Array.from({ length: AUTO_CONCURRENCY }, worker));
   if (room.prefetchQueue === queue) room.prefetchQueue = null;
-  if (room.phase === "auction") {
-    persist(room);
-    broadcast(room, "full");
-  }
 }
 
 /** Пак выбирают кликами — прогреваем только после паузы. */
@@ -1858,7 +1861,7 @@ const server = Bun.serve({
       });
     }
 
-    if (path === "/catalog") {
+    if (path === "/catalog" || path === "/catalog.txt") {
       // Каталог неизменяем: версия в ссылке, поэтому кеш на год и без cookie.
       const lang: Lang = url.searchParams.get("lang") === "en" ? "en" : "ru";
       const immutable = url.searchParams.get("v") === ASSET_VERSION;

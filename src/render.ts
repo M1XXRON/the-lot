@@ -657,7 +657,7 @@ function renderLobby(view: View) {
     ${inviteCard(view)}
     <div class="custom-packs" id="custom-packs">${customPackCard(view)}</div>
     <p class="list-eyebrow" id="category-list-label" data-one="${esc(t("unit.pack.one"))}" data-few="${esc(t("unit.pack.few"))}" data-many="${esc(t("unit.pack.many"))}">${view.packs.length} ${esc(units(t, (view.lang ?? "ru") as Lang, "pack", view.packs.length))} · ${esc(t("tab.all"))}</p>
-    <div class="category-list" id="pack-grid" data-catalog="/catalog?lang=${esc((view.lang ?? "ru") as string)}&amp;v=${esc(assetVersion)}" data-selected="${esc(view.pack.id)}"></div>
+    <div class="category-list" id="pack-grid" data-catalog="/catalog.txt?lang=${esc((view.lang ?? "ru") as string)}&amp;v=${esc(assetVersion)}" data-selected="${esc(view.pack.id)}"></div>
     <p class="empty-categories" id="pack-empty" hidden>${esc(t("lobby.noMatches"))}</p>
   </div>
   ${lobbySide(view)}
