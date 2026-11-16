@@ -679,6 +679,43 @@ function searchQuery(name: string) {
     .slice(0, 80);
 }
 
+/** Покемоны: официальный арт из PokéAPI (Википедия свободных картинок не отдаёт). */
+const POKE_PACKS = new Set(["pokemon", "pokemon-starters"]);
+const POKE_API = "https://pokeapi.co/api/v2/pokemon/";
+let pokeLast = 0;
+
+async function pokeTick() {
+  const wait = pokeLast + 150 - Date.now();
+  if (wait > 0) await Bun.sleep(wait);
+  pokeLast = Date.now();
+}
+
+function pokeSlug(name: string) {
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/['’.]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+async function pokePicture(name: string) {
+  const slug = pokeSlug(name);
+  if (!slug) return null;
+  await pokeTick();
+  const body: any = await fetchJson(`${POKE_API}${slug}`, { "user-agent": IMAGE_UA, accept: "application/json" }, 5000);
+  const art = body?.sprites?.other?.["official-artwork"]?.front_default ?? body?.sprites?.front_default;
+  if (!art || !body?.name) return null;
+  return {
+    url: String(art),
+    title: String(body.name),
+    page: `${POKE_API}${slug}`,
+    license: "PokéAPI",
+    trusted: true,
+  };
+}
+
 /** Паки супергероев: официальный арт берём из фандомов Marvel/DC, а не из косплея на Commons. */
 const FANDOM_PACKS: Record<string, string[]> = {
   superheroes: ["marvel", "dc"],
@@ -977,6 +1014,17 @@ async function commonsWithContext(name: string, packName: string, tab = ""): Pro
 async function primaryPicture(name: string, anime: boolean, high: boolean, packName: string, tab = "", packId = "") {
   let extras: ImageCandidate[] = [];
   let loadExtras: (() => Promise<ImageCandidate[]>) | null = null;
+
+  if (POKE_PACKS.has(packId)) {
+    const art = await pokePicture(name).catch(() => null);
+    if (art) {
+      loadExtras = async () => {
+        const wiki = await wikiPicture(name, packName, tab).catch(() => null);
+        return wiki ? [wiki] : [];
+      };
+      return { first: art, extras, loadExtras };
+    }
+  }
 
   const fandomHosts = FANDOM_PACKS[packId];
   if (fandomHosts) {
