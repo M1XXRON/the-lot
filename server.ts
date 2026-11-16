@@ -785,10 +785,15 @@ async function verifyPicture(hash: string, item: string, pack: string, trusted =
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
 /** В фандоме берём только страницу самого персонажа, а не кроссовер «Punisher/Batman». */
 function fandomTitleMatch(item: string, title: string) {
-  const a = item.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
-  const b = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const clean = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
+  const a = clean(item);
+  const b = clean(title);
   if (!a || !b) return false;
-  return a === b || b.startsWith(`${a} `);
+  if (a === b) return true;
+  if (!b.startsWith(a)) return false;
+  // После имени допустим только уточняющий квалификатор: «Magneto (Earth-616)».
+  // «Batman/Spider-Man Vol 1» — уже кроссовер, не персонаж.
+  return b.slice(a.length).trimStart().startsWith("(");
 }
 
 /** Официальный арт персонажа из фандома: сначала точная страница, потом поиск. */
