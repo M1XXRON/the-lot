@@ -608,13 +608,14 @@ function autoKey(name: string) {
 }
 
 /** Аниме-персонажи: официальный арт из AniList (Википедия несвободные картинки не отдаёт). */
-let anilistLast = 0;
+let anilistChain: Promise<void> = Promise.resolve();
 
-/** AniList держит ~90 запросов в минуту; текущему лоту разрешаем идти вне очереди. */
-async function anilistTick(high = false) {
-  const wait = anilistLast + (high ? 250 : 700) - Date.now();
-  if (wait > 0) await Bun.sleep(wait);
-  anilistLast = Date.now();
+/** AniList держит ~90 запросов в минуту: запросы выстраиваем в очередь, а не пачкой. */
+function anilistTick(high = false) {
+  const gap = high ? 250 : 800;
+  const next = anilistChain.then(() => Bun.sleep(gap));
+  anilistChain = next.catch(() => {});
+  return next;
 }
 
 function tokensOf(value: string) {
@@ -667,6 +668,7 @@ function tokenSimilar(token: string, list: string[]) {
 /** Поисковый запрос без служебных слов: «Edward & Alphonse» ищется как «Edward Alphonse». */
 function searchQuery(name: string) {
   return name
+    .replace(/\s*\([^)]*\)\s*$/, "")
     .replace(/\s+vs\.?\s+.*$/i, "")
     .replace(/\s*&\s*/g, " ")
     .replace(/\b(and|the)\b/gi, " ")
@@ -707,37 +709,47 @@ async function anilistPictures(name: string, high = false) {
   const query = searchQuery(name);
   if (!query) return [];
   await anilistTick(high);
-  const response = await fetch(ANILIST_API, {
-    method: "POST",
-    headers: { "content-type": "application/json", accept: "application/json", "user-agent": IMAGE_UA },
-    body: JSON.stringify({
-      query: "query($q:String){Page(perPage:5){characters(search:$q){name{full} image{large} siteUrl}}}",
-      variables: { q: query },
-    }),
-    signal: AbortSignal.timeout(7000),
-  }).catch(() => null);
+  const request = () =>
+    fetch(ANILIST_API, {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json", "user-agent": IMAGE_UA },
+      body: JSON.stringify({
+        query: "query($q:String){Page(perPage:5){characters(search:$q){name{full} image{large} siteUrl}}}",
+        variables: { q: query },
+      }),
+      signal: AbortSignal.timeout(7000),
+    }).catch(() => null);
+  let response = await request();
+  if (!response?.ok && (response?.status === 429 || (response?.status ?? 0) >= 500)) {
+    await Bun.sleep(900);
+    response = await request();
+  }
   if (!response?.ok) return [];
   const body: any = await response.json().catch(() => null);
   const list = Array.isArray(body?.data?.Page?.characters) ? body.data.Page.characters : [];
   const wanted = tokensOf(query);
   const exact = query.toLowerCase().replace(/\s+/g, " ").trim();
-  return list
-    .filter((character: any) => character?.image?.large)
-    .filter((character: any) => {
-      const name = String(character.name?.full ?? "");
-      // Короткие имена («L») не дают токенов — сравниваем строку целиком.
-      if (wanted.length === 0) return name.toLowerCase().replace(/\s+/g, " ").trim() === exact;
-      const got = tokensOf(name);
-      return wanted.some((token) => tokenSimilar(token, got));
-    })
-    .map((character: any) => ({
-      url: String(character.image.large),
-      license: "AniList",
-      page: String(character.siteUrl ?? "https://anilist.co"),
-      author: "",
-      title: String(character.name?.full ?? ""),
-      trusted: true,
-    }));
+  const matches = (character: any) => {
+    const name = String(character?.name?.full ?? "");
+    if (wanted.length === 0) return name.toLowerCase().replace(/\s+/g, " ").trim() === exact;
+    const got = tokensOf(name);
+    return wanted.some((token) => tokenSimilar(token, got));
+  };
+  const matched = list.filter((character: any) => character?.image?.large && matches(character));
+  // Верхний результат без совпадения имени («Акаину» → «Sakazuki») берём слабым:
+  // он показывается, но живёт только если vision-модель подтвердит.
+  const weak = list.find((character: any) => character?.image?.large && !matches(character));
+  const result = matched.map((character: any) => ({ character, weak: false }));
+  if (weak) result.push({ character: weak, weak: true });
+  return result.map(({ character, weak: isWeak }: any) => ({
+    url: String(character.image.large),
+    license: "AniList",
+    page: String(character.siteUrl ?? "https://anilist.co"),
+    author: "",
+    title: String(character.name?.full ?? ""),
+    trusted: true,
+    weak: isWeak,
+  }));
 }
 
 /** Адрес, по которому картинку увидит проверяющая модель: только наш публичный origin. */
@@ -763,8 +775,8 @@ async function checkSlot<T>(run: () => Promise<T>): Promise<T> {
  */
 let lastCheckAt = 0;
 
-async function verifyPicture(hash: string, item: string, pack: string, trusted = false, title = "", requireTitle = true) {
-  const fallback = title ? titleMatches(item, title) : !requireTitle;
+async function verifyPicture(hash: string, item: string, pack: string, trusted = false, title = "", requireTitle = true, weak = false) {
+  const fallback = weak ? false : title ? titleMatches(item, title) : !requireTitle;
   if (!IMAGE_CHECK) return fallback ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   const url = `${PUBLIC_BASE}/img/x/${hash}-342.webp`;
   const gap = lastCheckAt + 250 - Date.now();
@@ -941,7 +953,7 @@ async function wikiPicture(name: string, packName = "", tab = "") {
  * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
  * кешируется, поэтому пак прогревается один раз на всех игроков.
  */
-type ImageCandidate = { url: string; author?: string; license?: string; page?: string; title?: string; trusted?: boolean };
+type ImageCandidate = { url: string; author?: string; license?: string; page?: string; title?: string; trusted?: boolean; weak?: boolean };
 
 /** Сначала ищем с названием пака, если пусто — по одному предмету. */
 async function commonsWithContext(name: string, packName: string, tab = ""): Promise<ImageCandidate[]> {
@@ -973,7 +985,6 @@ async function primaryPicture(name: string, anime: boolean, high: boolean, packN
         const list: ImageCandidate[] = [];
         const wiki = await wikiPicture(name, packName, tab).catch(() => null);
         if (wiki) list.push(wiki);
-        list.push(...(await commonsWithContext(name, packName, tab)).slice(0, 3));
         return list;
       };
       return { first: art, extras, loadExtras };
@@ -981,7 +992,11 @@ async function primaryPicture(name: string, anime: boolean, high: boolean, packN
   }
 
   if (anime) {
-    const art = await anilistPictures(name, high).catch(() => []);
+    let art = await anilistPictures(name, high).catch(() => []);
+    if (art.length === 0) {
+      const short = searchQuery(name).split(" ")[0] ?? "";
+      if (short && short !== searchQuery(name)) art = await anilistPictures(short, high).catch(() => []);
+    }
     if (art.length > 0) {
       const [first, ...rest] = art;
       extras = rest;
@@ -989,21 +1004,16 @@ async function primaryPicture(name: string, anime: boolean, high: boolean, packN
         const list: ImageCandidate[] = [];
         const wiki = await wikiPicture(name, packName, tab).catch(() => null);
         if (wiki) list.push(wiki);
-        list.push(...(await commonsWithContext(name, packName, tab)).slice(0, 3));
         return list;
       };
       return { first: first!, extras, loadExtras };
     }
   }
 
+  // Commons в авто-подборе не участвует: косплей и логотипы оттуда — главный источник мусора.
   const wiki = await wikiPicture(name, packName, tab).catch(() => null);
-  if (wiki) {
-    loadExtras = async () => (await commonsWithContext(name, packName, tab)).slice(0, 3);
-    return { first: wiki, extras, loadExtras };
-  }
-
-  const commons = await commonsWithContext(name, packName, tab);
-  return { first: commons[0] ?? null, extras: commons.slice(1, 4), loadExtras: null };
+  if (wiki) return { first: wiki, extras, loadExtras: null };
+  return { first: null, extras, loadExtras: null };
 }
 
 /** Показать принятую картинку во всех комнатах, где есть этот предмет. */
@@ -1042,8 +1052,9 @@ async function verifyAndSwap(
   loadExtras: (() => Promise<ImageCandidate[]>) | null = null,
   trusted = true,
   currentTitle = "",
+  currentWeak = false,
 ) {
-  const verdict = await verifyPicture(currentHash, name, packName, trusted, currentTitle);
+  const verdict = await verifyPicture(currentHash, name, packName, trusted, currentTitle, true, currentWeak);
   if (verdict.ok) {
     store.saveAutoImage(key, currentHash, verdict.checker);
     return;
@@ -1063,7 +1074,7 @@ async function verifyAndSwap(
     checks += 1;
     try {
       const image = await autoSlot(() => ingestImage(candidate.url, "item", candidate));
-      const next = await verifyPicture(image.hash, name, packName, candidate.trusted, candidate.title);
+      const next = await verifyPicture(image.hash, name, packName, candidate.trusted, candidate.title, true, candidate.weak);
       if (!next.ok) continue;
       store.saveAutoImage(key, image.hash, next.checker);
       if (next.what) console.log(`[image] «${name}» ← ${next.what}`);
@@ -1100,15 +1111,30 @@ async function resolveItemPicture(
   const job = autoSlot(async () => {
     try {
       const { first, extras, loadExtras } = await primaryPicture(name, anime, high, packName, tab, packId);
+      const all = [first, ...extras].filter(Boolean) as ImageCandidate[];
+
+      if (!IMAGE_CHECK || !verify) {
+        // Без модели (или в библиотеке) берём только кандидата, в названии которого
+        // есть сам предмет: «Envy» не станет сериалом, «Kirei» — актёром озвучки.
+        const pick = all.find((candidate) => !candidate.weak && titleMatches(name, candidate.title ?? ""));
+        if (!pick) {
+          if (!first) store.saveAutoMiss(key);
+          return null;
+        }
+        const image = await ingestImage(pick.url, "item", pick);
+        store.saveAutoImage(key, image.hash, "heuristic");
+        return image.hash;
+      }
+
       if (!first) {
         store.saveAutoMiss(key);
         return null;
       }
       const image = await ingestImage(first.url, "item", first);
       // Библиотека качает без vision: на экране картинка всё равно будет проверена.
-      const checker = IMAGE_CHECK && verify ? "pending" : "heuristic";
+      const checker = verify ? "pending" : "heuristic";
       store.saveAutoImage(key, image.hash, checker);
-      if (IMAGE_CHECK && verify) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title);
+      if (verify) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title, first.weak === true);
       return image.hash;
     } catch {
       store.saveAutoMiss(key);
