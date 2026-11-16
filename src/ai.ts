@@ -439,7 +439,7 @@ export async function checkImage(url: string, item: string, pack: string, lang: 
       body: JSON.stringify({
         model,
         temperature: 0,
-        max_tokens: 300,
+        max_tokens: 600,
         messages: [
           { role: "system", content: "You check images for a two-player draft game. Answer with JSON only." },
           {
@@ -456,7 +456,39 @@ export async function checkImage(url: string, item: string, pack: string, lang: 
   } catch {
     return null;
   }
-  if (!response.ok) return null;
+  if (!response.ok) {
+    // Провайдер иногда отвечает 429/5xx: одна пауза и повтор.
+    if (response.status === 429 || response.status >= 500) {
+      await Bun.sleep(900);
+      try {
+        response = await fetch(`${baseUrl}/chat/completions`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            model,
+            temperature: 0,
+            max_tokens: 600,
+            messages: [
+              { role: "system", content: "You check images for a two-player draft game. Answer with JSON only." },
+              {
+                role: "user",
+                content: [
+                  { type: "text", text: question },
+                  { type: "image_url", image_url: { url } },
+                ],
+              },
+            ],
+          }),
+          signal: AbortSignal.timeout(12_000),
+        });
+      } catch {
+        return null;
+      }
+      if (!response.ok) return null;
+    } else {
+      return null;
+    }
+  }
   const data: any = await response.json().catch(() => null);
   const content = data?.choices?.[0]?.message?.content;
   const text = Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("\n") : content;

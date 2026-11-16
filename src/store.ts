@@ -316,7 +316,7 @@ const setItemStmt = db.prepare(
 const dropItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ?");
 const dropOneItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ? AND item = ?");
 const autoItemStmt = db.prepare("SELECT hash FROM auto_items WHERE name = ? AND checker != ''");
-const autoInfoStmt = db.prepare("SELECT hash, checker FROM auto_items WHERE name = ?");
+const autoInfoStmt = db.prepare("SELECT hash, checker, updated_at FROM auto_items WHERE name = ?");
 const putAutoItemStmt = db.prepare(
   "INSERT INTO auto_items (name, hash, checker, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, checker = excluded.checker, updated_at = excluded.updated_at",
 );
@@ -410,8 +410,8 @@ export function autoImage(name: string): string | null {
 }
 
 /** @param {string} name */
-export function autoImageInfo(name: string): { hash: string; checker: string } | null {
-  return (autoInfoStmt.get(name) as { hash: string; checker: string } | null) ?? null;
+export function autoImageInfo(name: string): { hash: string; checker: string; updated_at: number } | null {
+  return (autoInfoStmt.get(name) as { hash: string; checker: string; updated_at: number } | null) ?? null;
 }
 
 /** @param {string} name @param {string} hash @param {string} checker */

@@ -729,9 +729,14 @@ async function checkSlot<T>(run: () => Promise<T>): Promise<T> {
  * Смотрит на скачанную картинку глазами модели. Без публичного адреса
  * или ключа проверка недоступна — тогда верим источникам (checker=heuristic).
  */
+let lastCheckAt = 0;
+
 async function verifyPicture(hash: string, item: string, pack: string, trusted = false) {
   if (!IMAGE_CHECK) return trusted ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   const url = `${PUBLIC_BASE}/img/x/${hash}-342.webp`;
+  const gap = lastCheckAt + 250 - Date.now();
+  if (gap > 0) await Bun.sleep(gap);
+  lastCheckAt = Date.now();
   const verdict = await checkSlot(() => checkImage(url, item, pack)).catch(() => null);
   if (!verdict) return trusted ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   if (!verdict.ok) console.log(`[image] отклонено «${item}» (${pack}): ${verdict.what || "не то"}`);
@@ -740,8 +745,9 @@ async function verifyPicture(hash: string, item: string, pack: string, trusted =
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
 async function wikiLookup(query: string) {
-  if (!query) return null;
-  for (const lang of ["ru", "en"]) {
+  if (!query) return { found: false, candidate: null };
+  // Английская Википедия точнее различает омонимы, русская — богаче свободными фото.
+  for (const lang of ["en", "ru"]) {
     const url = new URL(WIKI_API.replace("{lang}", lang));
     url.searchParams.set("action", "query");
     url.searchParams.set("generator", "search");
@@ -760,23 +766,33 @@ async function wikiLookup(query: string) {
     if (!response?.ok) continue;
     const body: any = await response.json().catch(() => null);
     const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
+    if (!page) continue;
     const thumb = page?.thumbnail;
-    if (!thumb?.source) continue;
-    if (/disambiguation|значения/i.test(String(page.title ?? ""))) continue;
-    if (Number(thumb.width ?? 0) > 0 && Number(thumb.width) < 180) continue;
+    if (!thumb?.source) return { found: true, candidate: null };
+    if (/disambiguation|значения/i.test(String(page.title ?? ""))) return { found: true, candidate: null };
+    if (Number(thumb.width ?? 0) > 0 && Number(thumb.width) < 180) return { found: true, candidate: null };
     return {
-      url: String(thumb.source),
-      license: lang === "ru" ? "Википедия" : "Wikipedia",
-      page: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(page.title ?? query).replace(/ /g, "_"))}`,
+      found: true,
+      candidate: {
+        url: String(thumb.source),
+        license: lang === "ru" ? "Википедия" : "Wikipedia",
+        page: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(page.title ?? query).replace(/ /g, "_"))}`,
+      },
     };
   }
-  return null;
+  return { found: false, candidate: null };
 }
 
+/**
+ * Сначала ищем с названием пака. Если с паком нашлась статья, но без картинки —
+ * без пака уже не ищем: так «Rogue» не превращается в игру 1980 года.
+ */
 async function wikiPicture(name: string, packName = "") {
   const withPack = await wikiLookup(contextQuery(packName, name));
-  if (withPack) return withPack;
-  return wikiLookup(searchQuery(name));
+  if (withPack.candidate) return withPack.candidate;
+  if (withPack.found) return null;
+  const bare = await wikiLookup(searchQuery(name));
+  return bare.candidate;
 }
 
 /**
@@ -932,13 +948,17 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
 
 /** Недопроверенные картинки (рестарт посреди проверки) досматриваем при загрузке. */
 const pendingChecks = new Set<string>();
+const HEURISTIC_RECHECK = 6 * 60 * 60 * 1000;
 
 function recheckPending(name: string, packName: string) {
   if (!IMAGE_CHECK) return;
   const key = autoKey(name);
   if (pendingChecks.has(key)) return;
   const info = store.autoImageInfo(key);
-  if (!info || info.checker !== "pending") return;
+  if (!info) return;
+  // «pending» — проверка не доехала; «heuristic» — модель молчала, перепроверим позже.
+  const stale = info.checker === "heuristic" && Date.now() - info.updated_at > HEURISTIC_RECHECK;
+  if (info.checker !== "pending" && !stale) return;
   pendingChecks.add(key);
   void verifyAndSwap(key, name, packName, info.hash, []).finally(() => pendingChecks.delete(key));
 }
