@@ -1,8 +1,15 @@
 # The Lot
 
+![Bun](https://img.shields.io/badge/Bun-1.4.4-000?logo=bun&logoColor=fff)
+![Datastar](https://img.shields.io/badge/Datastar-1.0.5-ff3500)
+![SQLite](https://img.shields.io/badge/SQLite-bun%3Asqlite-003B57?logo=sqlite&logoColor=fff)
+![Players](https://img.shields.io/badge/2_players-one_winner-9e7830)
+![License](https://img.shields.io/badge/license-MIT-245245)
+[![verify](https://github.com/M1XXRON/the-lot/actions/workflows/verify.yml/badge.svg)](https://github.com/M1XXRON/the-lot/actions/workflows/verify.yml)
+
 Дом драфта на двоих: пять пиков, двадцать монет, один победитель. Сервер на Bun, состояние на сервере, UI обновляется HTML-патчами по SSE через Datastar.
 
-**Прод:** <https://lot.bunker9.lol> · **Код:** <https://github.com/M1XXRON/the-lot>
+**Прод:** <https://lot.bunker9.lol> · **Код:** <https://github.com/M1XXRON/the-lot> · **Лицензия:** MIT
 
 ## Стек
 
@@ -61,6 +68,15 @@ bun run test:http    # полная партия без браузера
 bun run test:ui      # два браузера + скриншоты
 bun run shots        # обновить screenshots/
 ```
+
+## CI
+
+`.github/workflows/verify.yml` на каждый пуш и PR гоняет две задачи:
+
+- **check** — `bun install --frozen-lockfile`, `tsc --noEmit`, экономическая симуляция (4 320 партий) и HTTP-e2e (8 сценариев);
+- **ui** — ставит Chromium для Playwright и прогоняет UI-e2e на двух браузерах, обновляя снимки.
+
+Локально то же самое: `bun run verify`.
 
 ## Как идёт партия
 

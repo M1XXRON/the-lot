@@ -2,6 +2,12 @@
   "name": "the-lot",
   "version": "1.0.0",
   "description": "The Lot — a two-player draft house (Bun + Datastar)",
+  "license": "MIT",
+  "homepage": "https://lot.bunker9.lol",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/M1XXRON/the-lot.git"
+  },
   "private": true,
   "type": "module",
   "scripts": {
@@ -21,6 +27,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.4",
+    "playwright": "1.65.0",
     "typescript": "^5.9.3"
   }
 }
