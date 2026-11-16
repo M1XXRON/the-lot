@@ -44,10 +44,10 @@ const CATALOG_DIR = resolve(process.env.LOT_CATALOG ?? "data/catalog");
 {
   mkdirSync(CATALOG_DIR, { recursive: true });
   for (const name of readdirSync(CATALOG_DIR)) {
-    if (!name.endsWith(`-${ASSET_VERSION}.txt`)) rmSync(join(CATALOG_DIR, name), { force: true });
+    if (!name.endsWith(`-${ASSET_VERSION}.js`)) rmSync(join(CATALOG_DIR, name), { force: true });
   }
   for (const lang of ["ru", "en"] as Lang[]) {
-    writeFileSync(join(CATALOG_DIR, `${lang}-${ASSET_VERSION}.txt`), catalogFragment(lang));
+    writeFileSync(join(CATALOG_DIR, `${lang}-${ASSET_VERSION}.js`), catalogFragment(lang));
   }
 }
 
@@ -1891,13 +1891,13 @@ const server = Bun.serve({
 
     if (path.startsWith("/public/catalog/")) {
       const file = path.slice("/public/catalog/".length);
-      if (!/^(ru|en)-[a-z0-9]+\.txt$/.test(file)) return new Response("Not found", { status: 404 });
+      if (!/^(ru|en)-[a-z0-9]+\.js$/.test(file)) return new Response("Not found", { status: 404 });
       const body = Bun.file(join(CATALOG_DIR, file));
       if (!(await body.exists())) return new Response("Not found", { status: 404 });
       return new Response(body, {
         headers: {
           ...SECURITY_HEADERS,
-          "Content-Type": "text/plain; charset=utf-8",
+          "Content-Type": "application/javascript; charset=utf-8",
           "Cache-Control": "public, max-age=31536000, immutable",
         },
       });
