@@ -53,6 +53,9 @@ const sessions = new Map<string, Session>();
 /** @type {Map<string, any>} */
 const rooms = new Map<string, any>();
 
+// Промахи живут неделю, но при старте их лучше сбросить: правила поиска меняются.
+store.clearAutoMisses();
+
 for (const room of store.loadRooms()) {
   if (!room?.code) continue;
   rooms.set(room.code, room);
@@ -560,7 +563,7 @@ const WIKI_API = process.env.LOT_WIKI_API ?? "https://{lang}.wikipedia.org/w/api
 const ANILIST_API = process.env.LOT_ANILIST_API ?? "https://graphql.anilist.co";
 /** Авто-картинки можно выключить (e2e без сети): LOT_AUTO_IMAGES=0. */
 const AUTO_ENABLED = process.env.LOT_AUTO_IMAGES !== "0";
-const AUTO_MISS_TTL = 30 * 24 * 60 * 60 * 1000;
+const AUTO_MISS_TTL = 7 * 24 * 60 * 60 * 1000;
 const AUTO_CONCURRENCY = 3;
 /** @type {Map<string, Promise<string | null>>} */
 const autoInflight = new Map();
@@ -602,6 +605,33 @@ function tokensOf(value: string) {
     .filter((token) => token.length >= 3);
 }
 
+/** Расстояние Левенштейна: имена приходят в разных транслитерациях (Frieza/Freeza). */
+function editDistance(a: string, b: string) {
+  const rows = a.length + 1;
+  const cols = b.length + 1;
+  let previous = Array.from({ length: cols }, (_, index) => index);
+  for (let i = 1; i < rows; i += 1) {
+    const current = [i];
+    for (let j = 1; j < cols; j += 1) {
+      current[j] = Math.min(
+        previous[j]! + 1,
+        current[j - 1]! + 1,
+        previous[j - 1]! + (a[i - 1] === b[j - 1] ? 0 : 1),
+      );
+    }
+    previous = current;
+  }
+  return previous[cols - 1]!;
+}
+
+function tokenSimilar(token: string, list: string[]) {
+  return list.some((other) => {
+    if (other === token) return true;
+    if (other.length < 4 || token.length < 4) return false;
+    return editDistance(other, token) <= (Math.min(other.length, token.length) >= 7 ? 2 : 1);
+  });
+}
+
 async function anilistPictures(name: string) {
   const query = name.replace(/\s+vs\.?\s+.*$/i, "").replace(/["'’]/g, "").trim().slice(0, 80);
   if (!query) return [];
@@ -623,7 +653,7 @@ async function anilistPictures(name: string) {
     .filter((character: any) => character?.image?.large)
     .filter((character: any) => {
       const got = tokensOf(String(character.name?.full ?? ""));
-      return wanted.some((token) => got.includes(token));
+      return wanted.some((token) => tokenSimilar(token, got));
     })
     .map((character: any) => ({
       url: String(character.image.large),

@@ -442,6 +442,10 @@ export function pruneImages(olderThan: number): string[] {
   return rows.map((row) => row.hash);
 }
 
+export function clearAutoMisses() {
+  db.query("DELETE FROM auto_misses").run();
+}
+
 /** @param {number} olderThan */
 export function pruneAutoMisses(olderThan: number) {
   db.query("DELETE FROM auto_misses WHERE updated_at < ?").run(olderThan);
