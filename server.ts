@@ -11,7 +11,8 @@ const PORT = Number(process.env.PORT ?? 4173);
 
 // Версия статики из mtime+size: после деплоя ссылки на CSS/JS меняются,
 // поэтому старый кеш браузера не может смешаться с новой разметкой.
-const ASSET_FILES = ["public/style.css", "public/redesign.css", "public/stages.css", "public/experience.js", "public/sound.js"];
+const ASSET_FILES = ["public/style.css", "public/redesign.css", "public/stages.css", "public/experience.js", "public/sound.js", "public/sw.js"];
+let ASSET_VERSION = "1";
 {
   let seed = 0;
   for (const file of ASSET_FILES) {
@@ -22,11 +23,16 @@ const ASSET_FILES = ["public/style.css", "public/redesign.css", "public/stages.c
       seed = (seed * 31 + 7) >>> 0;
     }
   }
-  setAssetVersion(seed.toString(36));
+  ASSET_VERSION = seed.toString(36);
+  setAssetVersion(ASSET_VERSION);
 }
 const HOST = process.env.HOST?.trim() || "0.0.0.0";
+/** Токен для детального /health: без него наружу видно только ok и uptime. */
+const OPS_TOKEN = (process.env.LOT_OPS_TOKEN ?? "").trim();
 const encoder = new TextEncoder();
 const PID_MAX_AGE = 60 * 60 * 24 * 365;
+/** Потолок живых столов: остальное все равно уберёт уборка. */
+const ROOM_LIMIT = 400;
 
 type Session = { room: string | null; seat: number | null };
 type Room = ReturnType<typeof engine.createRoom>;
@@ -48,7 +54,7 @@ for (const row of store.loadSessions()) {
 
 const SECURITY_HEADERS: Record<string, string> = {
   "Content-Security-Policy":
-    "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self' 'unsafe-eval'; worker-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   "Cross-Origin-Opener-Policy": "same-origin-allow-popups",
   "Cross-Origin-Resource-Policy": "same-origin",
   "Permissions-Policy": "camera=(), geolocation=(), microphone=()",
@@ -110,11 +116,57 @@ function html(body: string, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
-function json(value: unknown, status = 200) {
+function json(value: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(value), {
     status,
-    headers: { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+    headers: { ...SECURITY_HEADERS, "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...extra },
   });
+}
+
+/* ─────────────────── ограничители частоты ─────────────────── */
+
+/** Ведро токенов: burst — запас, rate — восстановление в секунду. */
+type Bucket = { tokens: number; updated: number };
+const buckets = new Map<string, Bucket>();
+
+function allow(key: string, rate: number, burst: number) {
+  const now = Date.now();
+  const bucket = buckets.get(key) ?? { tokens: burst, updated: now };
+  bucket.tokens = Math.min(burst, bucket.tokens + ((now - bucket.updated) / 1000) * rate);
+  bucket.updated = now;
+  if (bucket.tokens < 1) {
+    buckets.set(key, bucket);
+    return false;
+  }
+  bucket.tokens -= 1;
+  buckets.set(key, bucket);
+  return true;
+}
+
+function tooMany(retryAfter = 3) {
+  return json({ error: "Слишком много запросов." }, 429, { "Retry-After": String(retryAfter) });
+}
+
+function ipOf(request: Request) {
+  const forwarded = String(request.headers.get("x-forwarded-for") ?? "").split(",")[0]?.trim();
+  if (forwarded) return forwarded;
+  try {
+    return server.requestIP(request)?.address ?? "local";
+  } catch {
+    return "local";
+  }
+}
+
+function tokenMatches(given: string) {
+  if (!OPS_TOKEN || !given) return false;
+  const a = new TextEncoder().encode(given);
+  const b = new TextEncoder().encode(OPS_TOKEN);
+  if (a.length !== b.length) return false;
+  try {
+    return crypto.timingSafeEqual(a, b);
+  } catch {
+    return false;
+  }
 }
 
 /* ───────────────────────── SSE ───────────────────────── */
@@ -207,6 +259,37 @@ function persist(room: any) {
   store.saveRoom(room);
 }
 
+/* ── свои паки ── */
+
+/** Хозяин стола — первый pid комнаты (в локальном режиме pid один на двоих). */
+function hostPidOf(room: any) {
+  const owner = Array.isArray(room.pids) ? room.pids[0] : null;
+  return typeof owner === "string" ? owner : "";
+}
+
+/** Список сохранённых паков живёт в комнате: он же уходит в патчи лобби. */
+function libraryFor(room: any) {
+  room.customLib = hostPidOf(room) ? store.listCustomPacks(hostPidOf(room)) : [];
+  return room.customLib;
+}
+
+/** Пак из хранилища → пак комнаты: id остаётся за столом, содержимое — из записи. */
+function useSavedPack(room: any, pack: store.FullPack) {
+  engine.setCustomPack(room, {
+    id: `custom-${room.code.toLowerCase()}`,
+    name: pack.name,
+    emoji: pack.emoji,
+    tab: "CUSTOM",
+    count: pack.items.length,
+    items: pack.items,
+    profile: "party",
+    libId: pack.id,
+  });
+  room.customPackLibId = pack.id;
+  store.touchCustomPack(hostPidOf(room), pack.id);
+  libraryFor(room);
+}
+
 /** Черновик, который уходит модели. */
 function payloadFor(room: any): DraftPayload {
   const pack = content.packById.get(room.packId) ?? content.packs[0]!;
@@ -290,6 +373,7 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       if (message) say(room, sid, message, message);
       return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: back } });
     };
+    if (!allow(`upload:${pid}`, 1 / 5, 6)) return redirect(room.lang === "en" ? "Too often — give it a moment." : "Слишком часто — подождите немного.");
     if (!(file instanceof Blob)) return redirect("Прикрепите JSON-файл с паком.");
     if (file.size > 64 * 1024) return redirect("Файл больше 64 КБ.");
     let parsed: any;
@@ -311,6 +395,8 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       ? parsed.name.trim().replace(/[\u0000-\u001f]/g, "").slice(0, 40)
       : room.lang === "en" ? "Custom pack" : "Свой пак";
     const emoji = typeof parsed?.emoji === "string" && parsed.emoji.trim() ? [...parsed.emoji.trim()][0] : "🎲";
+    // Свой пак остаётся у игрока: id — от содержимого, поэтому повтор загрузки не плодит копий.
+    const saved = store.saveCustomPack(hostPidOf(room) || pid, { name, emoji, items: cleaned });
     engine.setCustomPack(room, {
       id: `custom-${room.code.toLowerCase()}`,
       name,
@@ -320,9 +406,32 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       items: cleaned,
       profile: "party",
     });
+    room.customPackLibId = saved.id;
+    libraryFor(room);
     persist(room);
     broadcast(room, "full");
     return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: back } });
+  }
+
+  if (cmd === "custom-load" || cmd === "custom-forget") {
+    if (!room) return fail(request, "Комната не найдена.", 410);
+    if (!engine.isHost(room, sid)) return fail(request, "Пак меняет хозяин стола.", 403);
+    if (room.phase !== "lobby") return fail(request, "Драфт уже начался.", 409);
+    const body = await readBody(request);
+    const id = typeof body.id === "string" ? body.id.slice(0, 40) : "";
+    const owner = hostPidOf(room) || pid;
+    if (cmd === "custom-load") {
+      const pack = store.getCustomPack(owner, id);
+      if (!pack) return fail(request, "Такого пака больше нет.", 404);
+      useSavedPack(room, pack);
+    } else {
+      store.forgetCustomPack(owner, id);
+      if (room.customPackLibId === id) engine.clearCustomPack(room);
+      libraryFor(room);
+    }
+    persist(room);
+    broadcast(room, "full");
+    return new Response(null, { status: 204, headers: SECURITY_HEADERS });
   }
 
   if (cmd === "custom-clear") {
@@ -368,6 +477,7 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
     const room: any = engine.createRoom({ code, mode, sessionId: sid, name });
     room.lang = langOf(request);
     room.pids = [pid, mode === "local" ? pid : null];
+    libraryFor(room);
     if (mode === "local") {
       engine.fillLocalSeat(room);
       const second = langOf(request) === "en" ? "PLAYER 2" : "ИГРОК 2";
@@ -638,7 +748,7 @@ async function serveStatic(pathname: string) {
 
 /* ─────────────────────── сервер ─────────────────────── */
 
-Bun.serve({
+const server = Bun.serve({
   port: PORT,
   hostname: HOST,
   idleTimeout: 255,
@@ -660,13 +770,17 @@ Bun.serve({
     };
 
     if (path === "/health") {
+      // Публично — только жизнь процесса. Счётчики и наличие ключей — только с токеном.
+      const brief = { ok: true, uptime: Math.round(process.uptime()) };
+      const ops = request.headers.get("x-lot-ops") ?? url.searchParams.get("token") ?? "";
+      if (!tokenMatches(ops)) return json(brief);
       return json({
-        ok: true,
-        uptime: Math.round(process.uptime()),
+        ...brief,
         rooms: rooms.size,
         sessions: sessions.size,
         db: store.dbStats(),
         ai: aiStatus(),
+        assets: ASSET_VERSION,
       });
     }
 
@@ -709,8 +823,31 @@ Bun.serve({
     }
 
     if (path === "/robots.txt") {
-      return new Response("User-agent: *\nAllow: /$\nDisallow: /r/\nDisallow: /act/\nDisallow: /img/\n", {
+      const body = `User-agent: *\nAllow: /$\nDisallow: /r/\nDisallow: /act/\nDisallow: /img/\nSitemap: ${origin}/sitemap.xml\n`;
+      return new Response(body, {
         headers: { ...SECURITY_HEADERS, "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+
+    if (path === "/sitemap.xml") {
+      const lastmod = new Date().toISOString().slice(0, 10);
+      const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n  <url>\n    <loc>${origin}/</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>weekly</changefreq>\n    <priority>1.0</priority>\n  </url>\n</urlset>\n`;
+      return new Response(xml, {
+        headers: { ...SECURITY_HEADERS, "Content-Type": "application/xml; charset=utf-8", "Cache-Control": "public, max-age=3600" },
+      });
+    }
+
+    if (path === "/sw.js") {
+      // Токен версии подставляем на отдаче: новый деплой = новый кеш у клиента.
+      const source = await Bun.file(resolve("public/sw.js")).text().catch(() => "");
+      if (!source) return new Response("Not found", { status: 404, headers: SECURITY_HEADERS });
+      return new Response(source.replaceAll("__LOT_ASSET_VERSION__", ASSET_VERSION), {
+        headers: {
+          ...SECURITY_HEADERS,
+          "Content-Type": "text/javascript; charset=utf-8",
+          "Cache-Control": "no-store",
+          "Service-Worker-Allowed": "/",
+        },
       });
     }
 
@@ -733,7 +870,14 @@ Bun.serve({
     }
 
     if (path.startsWith("/act/")) {
-      return withSid(await handleAction(request, path.slice(5), sid, pid, origin, secure));
+      const cmd = path.slice(5);
+      if (!allow(`act:${sid}`, 8, 60)) return withSid(tooMany(2));
+      if (cmd === "create") {
+        if (rooms.size >= ROOM_LIMIT) return withSid(html("<p>Столы заняты — попробуйте через минуту. <a href=\"/\">На главную</a></p>", 503));
+        if (!allow(`create:${ipOf(request)}`, 1 / 6, 20)) return withSid(tooMany(60));
+      }
+      if (cmd === "join" && !allow(`join:${ipOf(request)}`, 1 / 2, 40)) return withSid(tooMany(5));
+      return withSid(await handleAction(request, cmd, sid, pid, origin, secure));
     }
 
     if (path === "/") {
@@ -821,6 +965,7 @@ Bun.serve({
       const seat = seatOfSession(room, sid);
       session.seat = seat;
       store.rememberSession(sid, room.code, seat);
+      libraryFor(room);
       const pageView: any = engine.view(room, sid, origin);
       pageView.lang = langOf(request);
       return withSid(html(roomPage(pageView)));
@@ -848,6 +993,10 @@ setInterval(() => {
   }
   for (const [sid, session] of sessions) {
     if (session.room && !rooms.has(session.room)) sessions.delete(sid);
+  }
+  const stale = now - 10 * 60 * 1000;
+  for (const [key, bucket] of buckets) {
+    if (bucket.updated < stale) buckets.delete(key);
   }
 }, 10 * 60 * 1000);
 

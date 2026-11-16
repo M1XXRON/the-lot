@@ -38,6 +38,19 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS games_created ON games(created_at DESC);
+
+  CREATE TABLE IF NOT EXISTS custom_packs (
+    owner TEXT NOT NULL,
+    id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    emoji TEXT NOT NULL,
+    items TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    used_at INTEGER NOT NULL,
+    PRIMARY KEY (owner, id)
+  );
+
+  CREATE INDEX IF NOT EXISTS custom_packs_owner ON custom_packs(owner, used_at DESC);
 `);
 
 // Миграция для баз, созданных до появления истории игрока.
@@ -58,6 +71,20 @@ const upsertSession = db.prepare(
 const insertGame = db.prepare(
   "INSERT INTO games (code, pack, profile, judge, payload, pids, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
 );
+
+const upsertPack = db.prepare(
+  "INSERT INTO custom_packs (owner, id, name, emoji, items, created_at, used_at) VALUES (?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(owner, id) DO UPDATE SET name = excluded.name, emoji = excluded.emoji, items = excluded.items, used_at = excluded.used_at",
+);
+const listPacksStmt = db.prepare("SELECT id, name, emoji, items FROM custom_packs WHERE owner = ? ORDER BY used_at DESC LIMIT ?");
+const getPackStmt = db.prepare("SELECT id, name, emoji, items FROM custom_packs WHERE owner = ? AND id = ?");
+const dropPackStmt = db.prepare("DELETE FROM custom_packs WHERE owner = ? AND id = ?");
+const trimPacksStmt = db.prepare(
+  "DELETE FROM custom_packs WHERE owner = ? AND id NOT IN (SELECT id FROM custom_packs WHERE owner = ? ORDER BY used_at DESC LIMIT ?)",
+);
+
+/** Сколько своих паков держим у игрока. */
+export const CUSTOM_PACK_LIMIT = 12;
 
 /** @type {Set<string>} */
 const dirty = new Set<string>();
@@ -129,6 +156,75 @@ export function loadSessions() {
     room: string | null;
     seat: number | null;
   }[];
+}
+
+/* ─────────────── свои паки: храним за постоянным id игрока ─────────────── */
+
+export type SavedPack = { id: string; name: string; emoji: string; count: number };
+export type FullPack = { id: string; name: string; emoji: string; items: string[] };
+
+/** Устойчивый id: одинаковый набор с тем же именем не плодит дубликаты. */
+function packId(name: string, items: string[]) {
+  const source = `${name}\u0001${items.join("\u0000")}`;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < source.length; i += 1) {
+    hash ^= source.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `cp-${hash.toString(36)}`;
+}
+
+/** @param {string} owner @param {{ name: string; emoji: string; items: string[] }} pack */
+export function saveCustomPack(owner: string, pack: { name: string; emoji: string; items: string[] }): SavedPack {
+  const id = packId(pack.name, pack.items);
+  const now = Date.now();
+  upsertPack.run(owner, id, pack.name, pack.emoji, JSON.stringify(pack.items), now, now);
+  trimPacksStmt.run(owner, owner, CUSTOM_PACK_LIMIT);
+  return { id, name: pack.name, emoji: pack.emoji, count: pack.items.length };
+}
+
+/** @param {string} owner */
+export function listCustomPacks(owner: string): SavedPack[] {
+  if (!owner) return [];
+  const rows = listPacksStmt.all(owner, CUSTOM_PACK_LIMIT) as { id: string; name: string; emoji: string; items: string }[];
+  const out: SavedPack[] = [];
+  for (const row of rows) {
+    try {
+      const items = JSON.parse(row.items);
+      if (!Array.isArray(items) || items.length === 0) continue;
+      out.push({ id: row.id, name: row.name, emoji: row.emoji, count: items.length });
+    } catch {
+      /* битая строка — пропускаем */
+    }
+  }
+  return out;
+}
+
+/** @param {string} owner @param {string} id */
+export function getCustomPack(owner: string, id: string): FullPack | null {
+  if (!owner || !id) return null;
+  const row = getPackStmt.get(owner, id) as { id: string; name: string; emoji: string; items: string } | null;
+  if (!row) return null;
+  try {
+    const items = JSON.parse(row.items);
+    if (!Array.isArray(items) || items.length === 0) return null;
+    return { id: row.id, name: row.name, emoji: row.emoji, items: items.filter((item: unknown): item is string => typeof item === "string") };
+  } catch {
+    return null;
+  }
+}
+
+/** Отметить, что паком только что играли: он поднимется в списке. */
+export function touchCustomPack(owner: string, id: string) {
+  const pack = getCustomPack(owner, id);
+  if (pack) saveCustomPack(owner, pack);
+}
+
+/** @param {string} owner @param {string} id */
+export function forgetCustomPack(owner: string, id: string): boolean {
+  if (!owner || !id) return false;
+  const result = dropPackStmt.run(owner, id);
+  return Number(result.changes ?? 0) > 0;
 }
 
 /** @param {string} sid @param {string | null} room @param {number | null} seat */

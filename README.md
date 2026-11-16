@@ -32,7 +32,7 @@ src/render.ts      состояние → HTML (патчи по id)
 src/store.ts       bun:sqlite: rooms, sessions, games; отложенная запись
 src/ai.ts          OpenAI-совместимый клиент, три режима судьи, TMDb, mock
 src/content.js     паки и профили судейства
-public/            style.css + redesign.css + stages.css, experience.js, sound.js, vendor/
+public/            style.css + redesign.css + stages.css, experience.js, sound.js, sw.js, vendor/
 tools/             verify, http-e2e, ui-e2e, balance-sim, shot, lib
 test/sim-bun.mjs   боты по HTTP
 deploy/            smoke.sh, vps/ (bootstrap, deploy, lot.service, Caddyfile)
@@ -55,6 +55,7 @@ OPENCODEGO_BASE_URL=https://opencode.ai/inference/openai/v1
 OPENCODEGO_MODEL=gpt-6-luna
 OPENCODEGO_API_KEY=...
 TMDB_READ_ACCESS_TOKEN=...
+LOT_OPS_TOKEN=...        # необязательный: детали /health
 ```
 
 ## Проверки
@@ -73,7 +74,7 @@ bun run shots        # обновить screenshots/
 
 `.github/workflows/verify.yml` на каждый пуш и PR гоняет две задачи:
 
-- **check** — `bun install --frozen-lockfile`, `bun check`, нормы оценивания, экономическая симуляция (4 320 партий) и HTTP-e2e (8 сценариев);
+- **check** — `bun install --frozen-lockfile`, `bun check`, нормы оценивания, экономическая симуляция (4 320 партий) и HTTP-e2e (12 сценариев);
 - **ui** — ставит Chromium для Playwright и прогоняет UI-e2e на двух браузерах, обновляя снимки.
 
 Локально то же самое: `bun run verify`.
@@ -114,8 +115,12 @@ bun run shots        # обновить screenshots/
 - Максимум 5 пиков на игрока, 10 лотов в партии.
 - Если все пасуют, недостающие пики раздаются из пропущенных лотов — у обоих всегда ровно пять предметов.
 - Загруженный пак проверяется на сервере: ≤64 КБ, 5–60 уникальных предметов, управляющие символы вырезаются; в общий каталог он не попадает.
+- Свои паки остаются у игрока: до 12 штук за постоянным `lot_pid`, id считается от содержимого (повторная загрузка не плодит копий), пак переезжает в новый стол и ставится на стол одним кликом. Сам пак по-прежнему привязан к комнате и на других игроков не влияет.
 - Повтор оценки ограничен: не больше 3 раз и не чаще раза в 8 секунд; смена судьи отменяет незавершённый запрос к модели.
 - Действия валидируются на сервере: ход, бюджет, фаза, место.
+- Частота запросов ограничена ведром токенов: `/act/*` — 60 в запасе и 8/с на сессию, создание стола — 20 и 1/6 с на адрес, вход по коду — 40 и 1/2 с, загрузка пака — 6 и 1/5 с. Сверх лимита — `429` с `Retry-After`.
+- `/health` публично отдаёт только `ok` и `uptime`; счётчики комнат, базы и состояние судьи — по заголовку `x-lot-ops` с токеном `LOT_OPS_TOKEN`.
+- `/robots.txt` и `/sitemap.xml` собираются от текущего origin; `/sw.js` отдаётся без кеша и с подставленной версией статики, поэтому новый деплой = новый кеш. Service worker кеширует только лендинг и статику: `/stream`, `/act/*`, `/img/` и `/api/` не кешируются никогда.
 - Комнаты и сессии переживают рестарт; партии пишутся в `games`.
 
 ## Ограничения

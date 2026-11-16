@@ -79,6 +79,10 @@ const ru: Dict = {
   "custom.reset": "СБРОСИТЬ",
   "custom.loaded": "СВОЙ ПАК ЗАГРУЖЕН",
   "custom.hint": "Массив строк или {\"name\":\"…\",\"emoji\":\"🎲\",\"items\":[\"…\"]}: от 5 до 60 предметов.",
+  "custom.saved": "СОХРАНЁННЫЕ ПАКИ",
+  "custom.load": "ВЗЯТЬ",
+  "custom.forget": "Убрать пак",
+  "custom.tooOften": "Слишком часто — подождите немного.",
 
   // монетка
   "toss.kicker": "ШАГ ВТОРОЙ · ЖЕРЕБЬЁВКА",
@@ -353,6 +357,10 @@ const en: Dict = {
   "custom.reset": "RESET",
   "custom.loaded": "CUSTOM PACK LOADED",
   "custom.hint": "An array of strings or {\"name\":\"…\",\"emoji\":\"🎲\",\"items\":[\"…\"]}: 5 to 60 items.",
+  "custom.saved": "SAVED PACKS",
+  "custom.load": "USE",
+  "custom.forget": "Remove pack",
+  "custom.tooOften": "Too often — give it a moment.",
 
   "toss.kicker": "ШАГ ВТОРОЙ · ЖЕРЕБЬЁВКА",
   "toss.tap": "TAP THE COIN",

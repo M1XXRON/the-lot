@@ -236,4 +236,9 @@ document.addEventListener("DOMContentLoaded", () => {
     });
   };
   new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+
+  // Офлайн-оболочка: лендинг и стили остаются доступны без сети.
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("/sw.js").catch(() => {});
+  }
 });

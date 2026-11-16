@@ -537,16 +537,38 @@ function inviteCard(view: View) {
 
 function customPackCard(view: View) {
   const t = makeT((view.lang ?? "ru") as Lang);
+  const lang = (view.lang ?? "ru") as Lang;
+  const saved: any[] = Array.isArray(view.savedPacks) ? view.savedPacks : [];
   const custom = view.pack.tab === "CUSTOM";
-  if (custom) {
-    return `<div class="custom-pack-card is-loaded">
+
+  const loaded = custom
+    ? `<div class="custom-pack-card is-loaded" id="custom-loaded">
       <span class="custom-pack-mark">${esc(t("custom.loaded"))}</span>
       <span class="custom-pack-name">${esc(view.pack.emoji)} ${esc(view.pack.name)}</span>
-      <span class="custom-pack-count">${view.pack.count} ${esc(units(t, (view.lang ?? "ru") as Lang, "item", view.pack.count))}</span>
+      <span class="custom-pack-count">${view.pack.count} ${esc(units(t, lang, "item", view.pack.count))}</span>
       <button class="text-button" form="custom-clear-form" type="submit">${esc(t("custom.reset"))}</button>
-    </div>`;
-  }
-  return `<form class="custom-pack-card" id="custom-form" method="post" action="/act/custom" enctype="multipart/form-data">
+    </div>`
+    : "";
+
+  const library = saved.length
+    ? `<div class="custom-library" id="custom-library">
+      <span class="custom-pack-mark">${esc(t("custom.saved"))}</span>
+      <ul class="custom-library-list">
+        ${saved
+          .map(
+            (pack) => `<li class="custom-library-row${custom && pack.id === view.customLibId ? " is-active" : ""}">
+          <span class="custom-library-name">${esc(pack.emoji)} ${esc(pack.name)}</span>
+          <span class="custom-pack-count">${pack.count} ${esc(units(t, lang, "item", pack.count))}</span>
+          <button class="text-button" type="button" ${on("custom-load", { id: pack.id })}>${esc(t("custom.load"))}</button>
+          <button class="text-button custom-library-drop" type="button" aria-label="${esc(t("custom.forget"))}" title="${esc(t("custom.forget"))}" ${on("custom-forget", { id: pack.id })}>×</button>
+        </li>`,
+          )
+          .join("")}
+      </ul>
+    </div>`
+    : "";
+
+  const upload = `<form class="custom-pack-card" id="custom-form" method="post" action="/act/custom" enctype="multipart/form-data">
     <span class="custom-pack-mark">${esc(t("custom.title"))}</span>
     <label class="custom-pack-file">
       <input type="file" name="pack" accept="application/json,.json" required aria-label="${esc(t("custom.hint"))}" title="${esc(t("custom.hint"))}">
@@ -554,6 +576,10 @@ function customPackCard(view: View) {
     </label>
     <button class="text-button" type="submit">${esc(t("custom.upload"))}</button>
   </form>`;
+
+  // Гостю свои паки недоступны: их список и загрузка — дело хозяина стола.
+  if (!view.host) return "";
+  return `${loaded}${library}${upload}`;
 }
 
 function renderLobby(view: View) {

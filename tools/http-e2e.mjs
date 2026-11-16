@@ -183,10 +183,12 @@ async function customPack(server) {
   assert(uploaded.status === 303, `загрузка пака вернула ${uploaded.status}`);
   const lobby = await host.html(`/r/${code}`);
   assert(lobby.html.includes("Cosmos"), "свой пак не появился в лобби");
+  assert(lobby.html.includes("custom-pack-card is-loaded"), "нет плашки загруженного пака");
   const reset = await host.act("custom-clear");
   assert(reset.status === 204, "сброс своего пака не сработал");
   const afterReset = await host.html(`/r/${code}`);
-  assert(!afterReset.html.includes("Cosmos"), "свой пак не сбросился");
+  assert(!afterReset.html.includes("custom-pack-card is-loaded"), "свой пак не сбросился");
+  assert(afterReset.html.includes("СОХРАНЁННЫЕ ПАКИ"), "сброс стёр сохранённый пак игрока");
 
   await host.upload("/act/custom", { body: JSON.stringify(payload) });
   await host.act("toss");
@@ -196,6 +198,92 @@ async function customPack(server) {
   const lot = lotMatch?.[1]?.trim();
   assert(payload.items.includes(lot), `лот «${lot}» не из своего пака`);
   return { code };
+}
+
+/** Сохранённые паки переезжают в новый стол и загружаются одним кликом. */
+async function savedPacks(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  const items = ["Moon", "Mars", "Venus", "Jupiter", "Saturn"];
+  await host.upload("/act/custom", { body: JSON.stringify({ name: "Orbits", emoji: "🪐", items }) });
+
+  // второй стол того же игрока в другом клиенте-сессии видит только свою библиотеку
+  const second = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code: fresh } = roomCodeFrom(second);
+  const lobby = await host.html(`/r/${fresh}`);
+  assert(lobby.html.includes("Orbits"), "сохранённый пак не переехал в новый стол");
+  const id = lobby.html.match(/custom-load'[^)]*id: '([^']+)'/)?.[1];
+  assert(id, "в списке нет кнопки загрузки пака");
+
+  const missing = await host.actJson("custom-load", { id: "cp-nope" });
+  assert(missing.status === 404, `загрузка несуществующего пака вернула ${missing.status}`);
+  const load = await host.actJson("custom-load", { id });
+  assert(load.status === 204, `загрузка сохранённого пака вернула ${load.status}`);
+  const loaded = await host.html(`/r/${fresh}`);
+  assert(loaded.html.includes("custom-pack-card is-loaded"), "пак не встал на стол");
+  assert(loaded.html.includes("custom-library-row is-active"), "активный пак не отмечен в списке");
+
+  await host.act("toss");
+  await host.act("begin");
+  const auction = await host.html(`/r/${fresh}`);
+  const lot = auction.html.match(/id="auction-title"[^>]*>([^<]+)</)?.[1]?.trim();
+  assert(items.includes(lot), `лот «${lot}» не из сохранённого пака`);
+
+  // первый стол того же игрока тоже видит библиотеку
+  const first = await host.html(`/r/${code}`);
+  assert(first.html.includes("Orbits"), "в первом столе нет списка паков");
+  return { code: fresh };
+}
+
+/** /health без токена — только жизнь процесса; детали — по операторскому токену. */
+async function opsHealth(server) {
+  const open = await (await fetch(`${server.base}/health`)).json();
+  assert(open.ok === true, "health не ok");
+  assert(open.rooms === undefined && open.ai === undefined && open.db === undefined, "публичный health раскрывает внутренние счётчики");
+  const wrong = await (await fetch(`${server.base}/health?token=nope`)).json();
+  assert(wrong.rooms === undefined, "health отдал детали по неверному токену");
+  const ops = await (await fetch(`${server.base}/health`, { headers: { "x-lot-ops": process.env.LOT_OPS_TOKEN ?? "ops-test" } })).json();
+  assert(typeof ops.rooms === "number" && typeof ops.ai?.model === "string", "операторский health без деталей");
+  return { code: "health" };
+}
+
+/** Витрина для поисковиков и офлайн-оболочка. */
+async function discoverability(server) {
+  const sitemap = await fetch(`${server.base}/sitemap.xml`);
+  const xml = await sitemap.text();
+  assert(sitemap.status === 200, `sitemap вернул ${sitemap.status}`);
+  assert(xml.includes("<loc>") && /<loc>http:\/\/[^<]+\/<\/loc>/.test(xml), "sitemap без адреса дома");
+  const robots = await (await fetch(`${server.base}/robots.txt`)).text();
+  assert(/Sitemap: http:\/\/[^\s]+\/sitemap\.xml/.test(robots), "robots без ссылки на sitemap");
+
+  const sw = await fetch(`${server.base}/sw.js`);
+  const js = await sw.text();
+  assert(sw.status === 200, `sw.js вернул ${sw.status}`);
+  assert((sw.headers.get("content-type") ?? "").includes("javascript"), "sw.js без js-типа");
+  assert(!js.includes("__LOT_ASSET_VERSION__"), "в sw.js не подставилась версия");
+  assert((sw.headers.get("cache-control") ?? "").includes("no-store"), "sw.js кешируется");
+  return { code: "sitemap" };
+}
+
+/** Флуд действиями упирается в 429. */
+async function rateLimit(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  let limited = false;
+  for (let i = 0; i < 140; i += 1) {
+    const response = await host.actJson("step", { step: 1 });
+    if (response.status === 429) {
+      limited = true;
+      assert((response.headers.get("retry-after") ?? "") !== "", "429 без Retry-After");
+      break;
+    }
+  }
+  assert(limited, "нет ограничителя частоты на /act");
+  const page = await host.html(`/r/${code}`);
+  assert(page.status === 200, "после 429 комната перестала открываться");
+  return { code: "limiter" };
 }
 
 async function history(server) {
@@ -223,7 +311,7 @@ async function playLocalWith(host, packId) {
   return code;
 }
 
-const server = await startServer();
+const server = await startServer({ env: { LOT_OPS_TOKEN: "ops-test" } });
 let failures = 0;
 const checks = [
   ["local game", () => playLocal(server)],
@@ -233,6 +321,10 @@ const checks = [
   ["lot plate", () => posterPlate(server)],
   ["bid ladder", () => bidLadder(server)],
   ["custom pack", () => customPack(server)],
+  ["saved packs", () => savedPacks(server)],
+  ["ops health", () => opsHealth(server)],
+  ["sitemap & sw", () => discoverability(server)],
+  ["rate limit", () => rateLimit(server)],
   ["player history", () => history(server)],
 ];
 

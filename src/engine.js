@@ -164,12 +164,14 @@ export function bump(room) {
 export function setCustomPack(room, pack) {
   room.customPack = pack;
   room.packId = pack.id;
+  room.customPackLibId = pack.libId ?? null;
   bump(room);
 }
 
 /** @param {any} room */
 export function clearCustomPack(room) {
   room.customPack = null;
+  room.customPackLibId = null;
   room.packId = packOrFallback("free-soda").id;
   bump(room);
 }
@@ -545,6 +547,8 @@ export function view(room, sessionId, origin) {
       rounds: room.history.length,
     },
     history: room.history,
+    customLibId: room.customPackLibId ?? null,
+    savedPacks: sessionId && isHost(room, sessionId) && Array.isArray(room.customLib) ? room.customLib : [],
     review: room.review,
     reviewError: room.reviewError,
     judging: room.judging,
