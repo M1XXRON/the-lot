@@ -2,6 +2,8 @@
 import { assert, client, roomCodeFrom, startServer } from "./lib.mjs";
 
 const marker = (html, text) => html.includes(text);
+/** Токен для проверки операторского /health: тест не зависит от окружения. */
+const OPS_TOKEN = "ops-test";
 
 async function playLocal(server) {
   const host = client(server.base);
@@ -243,7 +245,7 @@ async function opsHealth(server) {
   assert(open.rooms === undefined && open.ai === undefined && open.db === undefined, "публичный health раскрывает внутренние счётчики");
   const wrong = await (await fetch(`${server.base}/health?token=nope`)).json();
   assert(wrong.rooms === undefined, "health отдал детали по неверному токену");
-  const ops = await (await fetch(`${server.base}/health`, { headers: { "x-lot-ops": process.env.LOT_OPS_TOKEN ?? "ops-test" } })).json();
+  const ops = await (await fetch(`${server.base}/health`, { headers: { "x-lot-ops": OPS_TOKEN } })).json();
   assert(typeof ops.rooms === "number" && typeof ops.ai?.model === "string", "операторский health без деталей");
   return { code: "health" };
 }
@@ -311,7 +313,7 @@ async function playLocalWith(host, packId) {
   return code;
 }
 
-const server = await startServer({ env: { LOT_OPS_TOKEN: "ops-test" } });
+const server = await startServer({ env: { LOT_OPS_TOKEN: OPS_TOKEN } });
 let failures = 0;
 const checks = [
   ["local game", () => playLocal(server)],
