@@ -86,8 +86,9 @@ const imageSource = Bun.serve({
     if (url.pathname.endsWith("/w/api.php")) {
       const raw = url.searchParams.get("gsrsearch") || "";
       const q = raw.toLowerCase();
-      const pages = q.startsWith("soda ")
-        ? [{ title: raw.replace(/^soda\s+/i, ""), thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 } }]
+      const prefixed = q.startsWith("soda ") || q.startsWith("athlete ");
+      const pages = prefixed
+        ? [{ title: raw.replace(/^(soda|athlete)\s+/i, ""), thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 } }]
         : [];
       return new Response(JSON.stringify({ query: { pages } }), { headers: { "content-type": "application/json" } });
     }
@@ -501,6 +502,27 @@ async function autoPictures(server) {
   return { code: fresh };
 }
 
+/** Подсказка вкладки: имя пака не помогло — ищем с «athlete» для SPORTS. */
+async function tabContext(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  await host.actJson("pack", { pack: "ufc-light-heavyweights" });
+  await host.act("toss");
+  await host.act("begin");
+  let page = "";
+  let plate = "";
+  for (let i = 0; i < 60; i += 1) {
+    page = (await host.html(`/r/${code}`)).html;
+    plate = page.match(/lot-plate--photo"><img src="(\/img\/x\/[a-f0-9]{24}-342\.webp)"/)?.[1] ?? "";
+    if (plate) break;
+    await Bun.sleep(100);
+  }
+  assert(plate, "картинка по подсказке вкладки не появилась");
+  assert(page.includes("Фото: Wikipedia"), "нет подписи к картинке из Википедии");
+  return { code };
+}
+
 /** Постер лота вручную: поиск по названию, плашка, подпись, снятие. */
 async function lotImage(server) {
   const host = client(server.base);
@@ -705,6 +727,7 @@ const checks = [
   ["item pictures", () => itemPictures(server)],
   ["auto pictures", () => autoPictures(server)],
   ["lot image", () => lotImage(server)],
+  ["tab context", () => tabContext(server)],
   ["local game", () => playLocal(server)],
   ["online game", () => playOnline(server)],
   ["human judge", () => humanJudge(server)],
