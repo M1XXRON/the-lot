@@ -49,7 +49,7 @@ try {
   await host.page.click('#pack-grid [data-pack="anime-characters"]');
   await host.page.waitForTimeout(250);
   assert((await host.page.locator("#lobby-side .selected-name").innerText()).includes("Anime Characters"), "пак не выбран");
-  assert(await host.page.locator("#judge-note").innerText().then((t) => t.includes("POWER")), "нет подсказки POWER-режима");
+  assert(await host.page.locator("#judge-note").innerText().then((t) => /СИЛ|POWER/.test(t)), "нет подсказки режима силы");
 
   // поиск фильтрует каталог на клиенте
   await host.page.fill("#pack-search", "pokemon");
@@ -92,7 +92,7 @@ try {
   assert(await host.page.locator('#room[data-phase="results"]').count(), "партия не дошла до итогов");
   assert((await guest.page.locator("#results-title").innerText()).length > 3, "у гостя нет вердикта");
   assert((await host.page.locator(".result-pick-rating").count()) === 10, "меньше десяти оценок");
-  assert((await host.page.locator("#analysis-method").innerText()).includes("POWER"), "итог не в POWER-режиме");
+  assert(/СИЛ|POWER/.test(await host.page.locator("#analysis-method").innerText()), "итог не в режиме силы");
 
   await host.page.click("#auction-log summary");
   await host.page.waitForTimeout(200);

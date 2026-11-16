@@ -43,7 +43,7 @@ async function playGame(index) {
     const picks = (page.html.match(/draft-slot is-filled/g) ?? []).length;
     const target = strategy(budget, picks);
     const bidDisabled = /id="bid-button"[^>]*disabled/.test(page.html);
-    const bidAmount = Number((page.html.match(/BID \$(\d+)/) ?? [])[1] ?? 99);
+    const bidAmount = Number((page.html.match(/(?:BID|СТАВКА)\s*\$(\d+)/) ?? [])[1] ?? 99);
     const shouldBid = !bidDisabled && bidAmount <= target;
     const action = await (shouldBid ? actor.act("bid") : actor.act("pass"));
     assert(action.status === 204, `действие бота вернуло ${action.status}`);

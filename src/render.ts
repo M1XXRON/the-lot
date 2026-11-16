@@ -20,12 +20,37 @@ function on(command: string, payload?: Record<string, string | number | boolean>
   return `data-on:click="@post('/act/${command}', {payload: {${body}}, retry: 'never'})"`;
 }
 
-const PROFILE_BADGE: Record<string, { label: string; className: string }> = {
-  "character-power": { label: "POWER", className: "judge-profile-badge--character-power" },
-  "athlete-performance": { label: "STATS", className: "judge-profile-badge--athlete-performance" },
-  "internet-ratings": { label: "TMDB", className: "judge-profile-badge--internet-ratings" },
-  party: { label: "", className: "" },
+const PROFILE_BADGE: Record<string, { key: string; className: string }> = {
+  "character-power": { key: "judge.badgePower", className: "judge-profile-badge--character-power" },
+  "athlete-performance": { key: "judge.badgeStats", className: "judge-profile-badge--athlete-performance" },
+  "internet-ratings": { key: "judge.tmdb", className: "judge-profile-badge--internet-ratings" },
+  party: { key: "", className: "" },
 };
+
+const TAB_KEYS: Record<string, string> = {
+  ALL: "tab.all",
+  FREE: "tab.free",
+  ANIME: "tab.anime",
+  SPORTS: "tab.sports",
+  "MOVIES & TV": "tab.movies",
+  MUSIC: "tab.music",
+  HOT: "tab.hot",
+  GAMING: "tab.gaming",
+  "FOOD & DRINK": "tab.food",
+  STYLE: "tab.style",
+  INTERNET: "tab.internet",
+  PARTY: "tab.party",
+  MORE: "tab.more",
+};
+
+function tabLabel(t: (key: string) => string, id: string) {
+  const key = TAB_KEYS[id];
+  return key ? t(key) : id;
+}
+
+function units(t: (key: string) => string, lang: Lang, kind: "item" | "pack" | "pick", count: number) {
+  return plural(lang, count, t(`unit.${kind}.one`), t(`unit.${kind}.few`), t(`unit.${kind}.many`));
+}
 
 const AI_KEY: Record<string, string> = {
   party: "judge.luna",
@@ -49,13 +74,13 @@ const NOTE_KEY: Record<string, string> = {
 };
 
 function ratingLabel(t: (key: string) => string, profile: string, rating: number | null) {
-  if (rating === null || rating === undefined) return "UNRATED";
+  if (rating === null || rating === undefined) return t("common.unrated");
   if (profile === "internet-ratings") return `TMDb ${Number(rating).toFixed(1)}`;
   return `${rating}/10`;
 }
 
 function scoreLabel(profile: string, score: number, ratedCount: number) {
-  if (profile === "internet-ratings") return ratedCount ? `${(score / 5).toFixed(1)}/10` : "UNRATED";
+  if (profile === "internet-ratings") return ratedCount ? `${(score / 5).toFixed(1)}/10` : "—";
   return `${score}/50`;
 }
 
@@ -168,7 +193,7 @@ export function landingPage(view: {
 
     <div class="entry-grid">
       <form class="entry-card" method="post" action="/act/create">
-        <p class="eyebrow">${esc(t("home.newTable"))}</p>
+        <p class="eyebrow"><span>${esc(t("home.newTable"))}</span><span class="entry-lot">${esc(t("entry.lotOne"))}</span></p>
         <h2>${esc(t("home.createTitle"))}</h2>
         <label class="field">${esc(t("home.name"))}
           <input name="name" maxlength="16" placeholder="${view.lang === "ru" ? "ИГРОК 1" : "PLAYER 1"}" autocomplete="nickname" required>
@@ -179,7 +204,7 @@ export function landingPage(view: {
       </form>
 
       <form class="entry-card" method="post" action="/act/join">
-        <p class="eyebrow">${esc(t("home.invitation"))}</p>
+        <p class="eyebrow"><span>${esc(t("home.invitation"))}</span><span class="entry-lot">${esc(t("entry.lotTwo"))}</span></p>
         <h2>${esc(t("home.joinTitle"))}</h2>
         <label class="field">${esc(t("home.code"))}
           <input name="code" maxlength="8" placeholder="ABCD" autocapitalize="characters" required>
@@ -364,7 +389,7 @@ export function renderBar(view: View) {
     return `<header class="game-topbar" id="room-bar">
       ${back}
       <div class="game-top-title">
-        <span class="eyebrow">${esc(view.pack.name.toUpperCase())} · ${view.profile === "internet-ratings" ? "TMDB" : "LOT"}</span>
+        <span class="eyebrow">${esc(view.pack.name.toUpperCase())} · ${view.profile === "internet-ratings" ? "TMDB" : esc(t("common.lotToken"))}</span>
         <span class="round-count">${esc(t("common.round"))} ${view.auction.number} · ${view.players[0].picks.length + view.players[1].picks.length}/10</span>
       </div>
       <div class="bar-actions">${rules}${sound}${langSwitch(t, lang, next)}</div>
@@ -418,9 +443,10 @@ function packCard(view: View, pack: any) {
   const t = makeT((view.lang ?? "ru") as Lang);
   const selected = pack.id === view.pack.id;
   const badge = PROFILE_BADGE[pack.profile];
+  const lang = (view.lang ?? "ru") as Lang;
   const flags =
-    (pack.verify ? `<span class="pack-flag" title="Manual content check">CHECK</span>` : "") +
-    (pack.inferred ? `<span class="pack-flag" title="Inferred from screenshots">INFERRED</span>` : "");
+    (pack.verify ? `<span class="pack-flag" title="${esc(t("common.manualCheck"))}">${esc(t("common.check"))}</span>` : "") +
+    (pack.inferred ? `<span class="pack-flag" title="${esc(t("common.inferredHint"))}">${esc(t("common.inferred"))}</span>` : "");
   return `<button type="button" class="category-card${selected ? " is-selected" : ""}"
       aria-pressed="${selected}"
       data-tab="${esc(pack.tab)}" data-search="${esc(pack.search)}" data-pack="${esc(pack.id)}"
@@ -429,12 +455,12 @@ function packCard(view: View, pack: any) {
     <span class="category-copy">
       <span class="category-name-line">
         <span class="category-title">${esc(pack.name)}</span>
-        ${badge?.label ? `<span class="judge-profile-badge ${badge.className}">${badge.label}</span>` : ""}
+        ${badge?.key ? `<span class="judge-profile-badge ${badge.className}">${esc(t(badge.key))}</span>` : ""}
         ${flags}
       </span>
-      <span class="sr-only">${esc(pack.tab)}</span>
+      <span class="sr-only">${esc(tabLabel(t, pack.tab))}</span>
     </span>
-    <span class="category-count">${pack.count} ${t("stage.drafted") === "" ? "" : "items"}</span>
+    <span class="category-count">${pack.count} ${esc(units(t, lang, "item", pack.count))}</span>
   </button>`;
 }
 
@@ -457,7 +483,7 @@ function lobbySide(view: View) {
     return `<footer class="category-footer" id="lobby-side">
       <div class="selected-pack"><span class="selected-emoji" aria-hidden="true">${esc(view.pack.emoji)}</span>
         <span class="selected-name">${esc(view.pack.name)}</span>
-        <span class="selected-count">${view.pack.count} items</span></div>
+        <span class="selected-count">${view.pack.count} ${esc(units(t, (view.lang ?? "ru") as Lang, "item", view.pack.count))}</span></div>
       <p class="judge-note sr-only">${esc(t("lobby.spectator"))}</p>
       <button class="primary-button start-button" type="button" disabled>${esc(t("lobby.spectate"))}</button>
     </footer>`;
@@ -471,7 +497,7 @@ function lobbySide(view: View) {
     <div class="selected-pack">
       <span class="selected-emoji" aria-hidden="true">${esc(view.pack.emoji)}</span>
       <span class="selected-name">${esc(view.pack.name)}</span>
-      <span class="selected-count">${view.pack.count} items</span>
+      <span class="selected-count">${view.pack.count} ${esc(units(t, (view.lang ?? "ru") as Lang, "item", view.pack.count))}</span>
     </div>
     <div class="judge-switch" role="group" aria-label="${esc(t("common.rules"))}">
       <button type="button" class="judge-option${auto ? " is-selected" : ""}" aria-pressed="${auto}" ${on("judge", { mode: "auto" })}>
@@ -516,7 +542,7 @@ function customPackCard(view: View) {
     return `<div class="custom-pack-card is-loaded">
       <span class="custom-pack-mark">${esc(t("custom.loaded"))}</span>
       <span class="custom-pack-name">${esc(view.pack.emoji)} ${esc(view.pack.name)}</span>
-      <span class="custom-pack-count">${view.pack.count} ${t("stage.items")}</span>
+      <span class="custom-pack-count">${view.pack.count} ${esc(units(t, (view.lang ?? "ru") as Lang, "item", view.pack.count))}</span>
       <button class="text-button" form="custom-clear-form" type="submit">${esc(t("custom.reset"))}</button>
     </div>`;
   }
@@ -533,12 +559,12 @@ function customPackCard(view: View) {
 function renderLobby(view: View) {
   const t = makeT((view.lang ?? "ru") as Lang);
   const chips = [
-    `<button type="button" class="filter-chip is-selected" data-tab="ALL" aria-pressed="true">ALL<span class="filter-count">${view.packs.length}</span></button>`,
+    `<button type="button" class="filter-chip is-selected" data-tab="ALL" data-label="${esc(t("tab.all"))}" aria-pressed="true">${esc(t("tab.all"))}<span class="filter-count">${view.packs.length}</span></button>`,
     ...view.tabs
       .filter((tab: any) => tab.id !== "ALL")
       .map(
         (tab: any) =>
-          `<button type="button" class="filter-chip" data-tab="${esc(tab.id)}" aria-pressed="false">${esc(tab.id)}<span class="filter-count">${tab.packCount}</span></button>`,
+          `<button type="button" class="filter-chip" data-tab="${esc(tab.id)}" data-label="${esc(tabLabel(t, tab.id))}" aria-pressed="false">${esc(tabLabel(t, tab.id))}<span class="filter-count">${tab.packCount}</span></button>`,
       ),
   ].join("");
 
@@ -552,7 +578,7 @@ function renderLobby(view: View) {
   <div class="category-list-wrap">
     ${inviteCard(view)}
     ${customPackCard(view)}
-    <p class="list-eyebrow" id="category-list-label">${esc(t("lobby.packs", { count: view.packs.length, tab: "ALL" }))}</p>
+    <p class="list-eyebrow" id="category-list-label" data-one="${esc(t("unit.pack.one"))}" data-few="${esc(t("unit.pack.few"))}" data-many="${esc(t("unit.pack.many"))}">${view.packs.length} ${esc(units(t, (view.lang ?? "ru") as Lang, "pack", view.packs.length))} · ${esc(t("tab.all"))}</p>
     <div class="category-list" id="pack-grid">${view.packs.map((pack: any) => packCard(view, pack)).join("")}</div>
     <p class="empty-categories" id="pack-empty" hidden>${esc(t("lobby.noMatches"))}</p>
   </div>
@@ -607,7 +633,7 @@ function ledger(view: View, index: 0 | 1) {
       <span class="slot-number">${slot + 1}</span>
       ${thumb(pick)}
       <span class="slot-item" title="${esc(pick.name)}">${esc(pick.name)}</span>
-      <span class="slot-price">${pick.auto ? "FREE" : money(pick.price)}</span>
+      <span class="slot-price">${pick.auto ? esc(t("common.free")) : money(pick.price)}</span>
     </li>`;
   }).join("");
 
@@ -705,8 +731,8 @@ function bidPanel(view: View) {
     </div>
     ${stepper}
     <div class="auction-actions">
-      <button class="primary-button bid-button" id="bid-button" type="button" ${on("bid")} ${canBid ? "" : "disabled"}>${esc(t("stage.bid", { n: money(au.bidAmount) }))}</button>
-      <button class="secondary-button pass-button" id="pass-button" type="button" ${on("pass")} ${view.auction.canAct ? "" : "disabled"}>${esc(t("stage.pass"))}</button>
+      <button class="primary-button bid-button" id="bid-button" type="button" ${on("bid")} ${canBid ? "" : "disabled"}>${esc(t("common.bid"))} ${money(au.bidAmount)}</button>
+      <button class="secondary-button pass-button" id="pass-button" type="button" ${on("pass")} ${view.auction.canAct ? "" : "disabled"}>${esc(t("common.pass"))}</button>
     </div>
     ${high === null ? "" : `<p class="ladder-note" aria-hidden="true">${esc(t("stage.stepNote"))}</p>`}
     <p class="keys-hint" aria-hidden="true">${esc(t("stage.keys"))}</p>
@@ -750,7 +776,7 @@ function scorecard(view: View, index: 0 | 1) {
         <span class="result-pick-rating" title="${esc(
           bandFor(view.profile, note?.rating ?? pick.rating ?? null) ? t(`norms.band${BANDS.indexOf(bandFor(view.profile, note?.rating ?? pick.rating ?? null)!) + 1}`) : "",
         )}">${esc(ratingLabel(t, view.profile, note?.rating ?? pick.rating ?? null))}</span>
-        <span class="result-pick-price">${pick.auto ? "FREE" : money(pick.price)}</span>
+        <span class="result-pick-price">${pick.auto ? esc(t("common.free")) : money(pick.price)}</span>
         ${text ? `<span class="result-pick-reason">${esc(text)}</span>` : ""}
       </div>`;
     })
@@ -764,7 +790,7 @@ function scorecard(view: View, index: 0 | 1) {
       </div>`
     : "";
 
-  const judgeName = view.profile === "internet-ratings" ? "TMDb" : view.review?.model === "mock" ? "mock" : "Luna";
+  const judgeName = view.profile === "internet-ratings" ? "TMDb" : view.review?.model === "mock" ? t("common.testMode") : "Luna";
   return `<article class="result-card">
     <h2><i class="player-color-dot player-color-dot--${index + 1}" aria-hidden="true"></i>${esc(player.name)}
       <span>${view.review ? esc(scoreLabel(view.profile, report?.score ?? 0, report?.ratedCount ?? 0)) : `${player.picks.length}/5`}</span>

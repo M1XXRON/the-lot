@@ -165,12 +165,12 @@ async function bidLadder(server) {
   const step = await host.actJson("step", { step: 3 });
   assert(step.status === 204, `шаг ставки вернул ${step.status}`);
   const page = await host.html(`/r/${code}`);
-  assert(page.html.includes("BID $4"), "ставка не поднялась на выбранный шаг");
+  assert(/BID|СТАВКА/.test(page.html) && page.html.includes("$4"), "ставка не поднялась на выбранный шаг");
   assert(page.html.includes("ladder-chip is-selected"), "нет активного шага");
   const tooMuch = await host.actJson("step", { step: 99 });
   assert(tooMuch.status === 204, "шаг вне диапазона не обработан");
   const clamped = await host.html(`/r/${code}`);
-  assert(clamped.html.includes("BID $6"), "шаг не ограничился пятью");
+  assert(clamped.html.includes("$6"), "шаг не ограничился пятью");
   return { code };
 }
 

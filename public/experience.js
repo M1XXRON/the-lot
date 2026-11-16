@@ -33,8 +33,23 @@ function applyCatalog() {
     card.hidden = !visible;
     if (visible) shown += 1;
   }
-  const nextLabel = `${shown} PACKS · ${catalogState.tab}`;
-  if (label && label.textContent !== nextLabel) label.textContent = nextLabel;
+  if (label) {
+    const activeChip = document.querySelector(`#category-filters [data-tab="${CSS.escape(catalogState.tab)}"]`);
+    const tabName = activeChip?.dataset.label || catalogState.tab;
+    const forms = [label.dataset.one, label.dataset.few, label.dataset.many].filter(Boolean);
+    const lang = document.documentElement.lang === "en" ? "en" : "ru";
+    let word = forms[0] ?? "";
+    if (lang === "en") word = shown === 1 ? forms[0] : forms[2] ?? forms[0];
+    else {
+      const mod10 = shown % 10;
+      const mod100 = shown % 100;
+      if (mod10 === 1 && mod100 !== 11) word = forms[0];
+      else if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) word = forms[1];
+      else word = forms[2];
+    }
+    const nextLabel = `${shown} ${word} · ${tabName}`;
+    if (label.textContent !== nextLabel) label.textContent = nextLabel;
+  }
   const empty = document.getElementById("pack-empty");
   if (empty) empty.hidden = shown > 0;
 }

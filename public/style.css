@@ -364,6 +364,9 @@
     text-align: center;
   }
 
+  :lang(ru) .party-game-grid button::before { content: "№ " counter(house-game, decimal-leading-zero); }
+  :lang(ru) .party-game-grid button::after { content: "КАТАЛОГ →"; }
+
   .hero-caption::before,
   .hero-caption::after {
     flex: 1 1 2rem;
@@ -423,6 +426,7 @@
   .party-game-grid button::before {
     counter-increment: house-game;
     content: "NO. " counter(house-game, decimal-leading-zero);
+    /* подпись меняется по языку документа */
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.64rem;

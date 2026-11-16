@@ -12,22 +12,35 @@ export function roomCode(length = 4) {
   return out;
 }
 
-const DESCRIPTIONS = [
-  "A classic with a little extra fizz.",
-  "Bold pick. Somebody will argue.",
-  "The safe choice — or the boring one?",
-  "Cheap, loud, and hard to ignore.",
-  "A late-round steal if it lands.",
-  "This one splits the table.",
-  "Quietly the best thing in the pack.",
-  "Every house needs one of these.",
-];
+const DESCRIPTIONS = {
+  en: [
+    "A classic with a little extra fizz.",
+    "Bold pick. Somebody will argue.",
+    "The safe choice — or the boring one?",
+    "Cheap, loud, and hard to ignore.",
+    "A late-round steal if it lands.",
+    "This one splits the table.",
+    "Quietly the best thing in the pack.",
+    "Every house needs one of these.",
+  ],
+  ru: [
+    "Классика с лишним газом.",
+    "Смелый выбор. Кто-то поспорит.",
+    "Надёжно — или скучно?",
+    "Дёшево, громко и мимо не пройдёшь.",
+    "Украшение конца драфта, если доживёт.",
+    "Этот предмет делит стол пополам.",
+    "Тихо лучшее в паке.",
+    "Такой предмет нужен каждому дому.",
+  ],
+};
 
-/** @param {string} name */
-function describe(name) {
+/** @param {string} name @param {string} [lang] */
+function describe(name, lang = "ru") {
   let hash = 0;
   for (let i = 0; i < name.length; i += 1) hash = (hash * 31 + name.charCodeAt(i)) >>> 0;
-  return DESCRIPTIONS[hash % DESCRIPTIONS.length];
+  const pool = DESCRIPTIONS[lang] ?? DESCRIPTIONS.ru;
+  return pool[hash % pool.length];
 }
 
 /** @param {string[]} list */
@@ -201,7 +214,8 @@ export function tossCoin(room) {
 export function beginDraft(room) {
   if (room.phase !== "toss") return "wrong-phase";
   const pack = room.customPack ?? packOrFallback(room.packId);
-  room.lots = shuffle(pack.items).map((name) => ({ name, emoji: pack.emoji, description: describe(name) }));
+  const lotLang = room.lang === "en" ? "en" : "ru";
+  room.lots = shuffle(pack.items).map((name) => ({ name, emoji: pack.emoji, description: describe(name, lotLang) }));
   room.skippedLots = [];
   room.players = [newPlayer(room.players[0].name), newPlayer(room.players[1].name)];
   room.history = [];

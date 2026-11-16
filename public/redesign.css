@@ -32,16 +32,7 @@
     color: var(--brass-ink);
   }
 
-  .entry-card:first-child > .eyebrow::after {
-    content: "LOT I";
-    color: var(--muted);
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    letter-spacing: 0.14em;
-  }
-
-  .entry-card:nth-child(2) > .eyebrow::after {
-    content: "LOT II";
+  .entry-lot {
     color: var(--muted);
     font-family: var(--font-mono);
     font-size: 0.62rem;
@@ -135,6 +126,8 @@
     font-size: 0.6rem;
     letter-spacing: 0.12em;
   }
+
+  :lang(ru) .link-button::before { content: "ПЕРЕДАЙТЕ УСТРОЙСТВО"; }
 
   .link-button:hover {
     border-color: var(--ink);

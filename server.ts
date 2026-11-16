@@ -360,7 +360,8 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
   // создание и вход приходят обычными формами с лендинга
   if (cmd === "create") {
     const mode = body.mode === "local" ? "local" : "online";
-    const name = String(body.name ?? "PLAYER 1").slice(0, 16);
+    const fallbackName = langOf(request) === "en" ? "PLAYER 1" : "ИГРОК 1";
+    const name = String(body.name ?? fallbackName).slice(0, 16);
     let code = engine.roomCode();
     let guard = 0;
     while (rooms.has(code) && guard++ < 50) code = engine.roomCode();
@@ -387,7 +388,8 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
 
   if (cmd === "join") {
     const code = String(body.code ?? "").trim().toUpperCase().slice(0, 8);
-    const name = String(body.name ?? "PLAYER 2").slice(0, 16);
+    const fallbackGuest = langOf(request) === "en" ? "PLAYER 2" : "ИГРОК 2";
+    const name = String(body.name ?? fallbackGuest).slice(0, 16);
     const room = rooms.get(code);
     if (!room) return html(`<p>Стол ${code} не найден. <a href="/">На главную</a></p>`, 404);
     const seat = engine.join(room, sid, name);
