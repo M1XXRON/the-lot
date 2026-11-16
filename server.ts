@@ -1,5 +1,5 @@
 // The Lot — один процесс: лендинг, комната, SSE-патчи Datastar, действия, статика.
-import { mkdirSync } from "node:fs";
+import { mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { resolve, normalize, join } from "node:path";
 import { lookup } from "node:dns/promises";
@@ -38,6 +38,19 @@ let ASSET_VERSION = "1";
   ASSET_VERSION = seed.toString(36);
   setAssetVersion(ASSET_VERSION);
 }
+// Каталог — файл с версией в имени под /public: край Cloudflare кеширует такие
+// адреса, а динамический ответ с query-строкой оставлял 60 КБ на каждый заход.
+const CATALOG_DIR = resolve(process.env.LOT_CATALOG ?? "data/catalog");
+{
+  mkdirSync(CATALOG_DIR, { recursive: true });
+  for (const name of readdirSync(CATALOG_DIR)) {
+    if (!name.endsWith(`-${ASSET_VERSION}.txt`)) rmSync(join(CATALOG_DIR, name), { force: true });
+  }
+  for (const lang of ["ru", "en"] as Lang[]) {
+    writeFileSync(join(CATALOG_DIR, `${lang}-${ASSET_VERSION}.txt`), catalogFragment(lang));
+  }
+}
+
 const HOST = process.env.HOST?.trim() || "0.0.0.0";
 /** Токен для детального /health: без него наружу видно только ok и uptime. */
 const OPS_TOKEN = (process.env.LOT_OPS_TOKEN ?? "").trim();
@@ -1690,6 +1703,7 @@ const MIME: Record<string, string> = {
   ".png": "image/png",
   ".json": "application/json; charset=utf-8",
   ".md": "text/markdown; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 /**
@@ -1704,8 +1718,8 @@ async function serveStatic(pathname: string, version: string | null) {
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
   const ext = relative.slice(relative.lastIndexOf("."));
 
-  // Файлы вендора версионированы именем, остальные — параметром ?v=.
-  const immutable = version === ASSET_VERSION || relative.startsWith("vendor/");
+  // Файлы вендора и каталога версионированы именем, остальные — параметром ?v=.
+  const immutable = version === ASSET_VERSION || relative.startsWith("vendor/") || relative.startsWith("catalog/");
   const headers = {
     ...SECURITY_HEADERS,
     "Content-Type": MIME[ext] ?? "application/octet-stream",
@@ -1871,6 +1885,20 @@ const server = Bun.serve({
           ...SECURITY_HEADERS,
           "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=300",
+        },
+      });
+    }
+
+    if (path.startsWith("/public/catalog/")) {
+      const file = path.slice("/public/catalog/".length);
+      if (!/^(ru|en)-[a-z0-9]+\.txt$/.test(file)) return new Response("Not found", { status: 404 });
+      const body = Bun.file(join(CATALOG_DIR, file));
+      if (!(await body.exists())) return new Response("Not found", { status: 404 });
+      return new Response(body, {
+        headers: {
+          ...SECURITY_HEADERS,
+          "Content-Type": "text/plain; charset=utf-8",
+          "Cache-Control": "public, max-age=31536000, immutable",
         },
       });
     }

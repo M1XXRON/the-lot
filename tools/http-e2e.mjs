@@ -604,9 +604,13 @@ async function itemPictures(server) {
 
 /** Каталог едет отдельным кешируемым ответом, а комната остаётся лёгкой. */
 async function catalog(server) {
-  const landing = await (await fetch(`${server.base}/`)).text();
-  const version = landing.match(/style\.css\?v=([a-z0-9]+)/)?.[1];
-  const catalog = await fetch(`${server.base}/catalog.txt?lang=ru&v=${version}`);
+  const host0 = client(server.base);
+  const created0 = await host0.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code: lobbyCode } = roomCodeFrom(created0);
+  const room0 = await host0.html(`/r/${lobbyCode}`);
+  const catalogUrl = room0.html.match(/data-catalog="([^"]+)"/)?.[1];
+  assert(catalogUrl?.startsWith("/public/catalog/ru-"), `каталог не под /public: ${catalogUrl}`);
+  const catalog = await fetch(`${server.base}${catalogUrl}`);
   const html = await catalog.text();
   assert(catalog.status === 200, `каталог вернул ${catalog.status}`);
   assert((html.match(/class="category-card/g) ?? []).length > 200, "в каталоге меньше двухсот карточек");
@@ -617,7 +621,7 @@ async function catalog(server) {
   const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
   const { code } = roomCodeFrom(created);
   const room = await host.html(`/r/${code}`);
-  assert(room.html.includes('data-catalog="/catalog.txt?'), "в лобби нет ссылки на каталог");
+  assert(room.html.includes('data-catalog="/public/catalog/'), "в лобби нет ссылки на каталог");
   assert(!/class="category-card/.test(room.html), "карточки каталога всё ещё едут внутри комнаты");
   assert(room.html.length < 40_000, `страница лобби всё ещё тяжёлая: ${room.html.length} байт`);
   return { code };

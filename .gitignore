@@ -11,3 +11,4 @@ opencode.env
 *.log
 .DS_Store
 screenshots/
+data/catalog/
