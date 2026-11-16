@@ -681,6 +681,19 @@ function searchQuery(name: string) {
     .slice(0, 80);
 }
 
+/** Короткий контекст по вкладке каталога — запасной вариант, если имя пака не помогло. */
+const TAB_CONTEXT: Record<string, string> = {
+  ANIME: "anime",
+  SPORTS: "athlete",
+  "FOOD & DRINK": "food",
+  "MOVIES & TV": "film",
+  MUSIC: "band",
+  GAMING: "video game",
+  STYLE: "fashion",
+  INTERNET: "website",
+  "NSY TikTok": "tiktok",
+};
+
 /** Поиск с контекстом пака: «Superheroes Rogue» вместо просто «Rogue». */
 function contextQuery(packName: string, item: string) {
   const pack = searchQuery(packName);
@@ -808,10 +821,18 @@ async function wikiLookup(query: string) {
  * Сначала ищем с названием пака. Если с паком нашлась статья, но без картинки —
  * без пака уже не ищем: так «Rogue» не превращается в игру 1980 года.
  */
-async function wikiPicture(name: string, packName = "") {
+async function wikiPicture(name: string, packName = "", tab = "") {
   const withPack = await wikiLookup(contextQuery(packName, name));
   if (withPack.candidate) return withPack.candidate;
   if (withPack.found) return null;
+
+  const hint = TAB_CONTEXT[tab] ?? "";
+  if (hint) {
+    const withTab = await wikiLookup(contextQuery(hint, name));
+    if (withTab.candidate) return withTab.candidate;
+    if (withTab.found) return null;
+  }
+
   const bare = await wikiLookup(searchQuery(name));
   return bare.candidate;
 }
@@ -823,9 +844,16 @@ async function wikiPicture(name: string, packName = "") {
 type ImageCandidate = { url: string; author?: string; license?: string; page?: string; title?: string; trusted?: boolean };
 
 /** Сначала ищем с названием пака, если пусто — по одному предмету. */
-async function commonsWithContext(name: string, packName: string): Promise<ImageCandidate[]> {
+async function commonsWithContext(name: string, packName: string, tab = ""): Promise<ImageCandidate[]> {
   const withPack = await commonsCandidates(contextQuery(packName, name), true, name).catch(() => []);
   if (withPack.length > 0) return withPack;
+
+  const hint = TAB_CONTEXT[tab] ?? "";
+  if (hint) {
+    const withTab = await commonsCandidates(contextQuery(hint, name), true, name).catch(() => []);
+    if (withTab.length > 0) return withTab;
+  }
+
   return commonsCandidates(searchQuery(name), true, name).catch(() => []);
 }
 
@@ -833,7 +861,7 @@ async function commonsWithContext(name: string, packName: string): Promise<Image
  * Первого кандидата отдаём сразу, остальных догружаем только если проверка
  * забракует: у аниме это ещё арт-варианты, затем статья и свободные фото.
  */
-async function primaryPicture(name: string, anime: boolean, high: boolean, packName: string) {
+async function primaryPicture(name: string, anime: boolean, high: boolean, packName: string, tab = "") {
   let extras: ImageCandidate[] = [];
   let loadExtras: (() => Promise<ImageCandidate[]>) | null = null;
 
@@ -844,22 +872,22 @@ async function primaryPicture(name: string, anime: boolean, high: boolean, packN
       extras = rest;
       loadExtras = async () => {
         const list: ImageCandidate[] = [];
-        const wiki = await wikiPicture(name, packName).catch(() => null);
+        const wiki = await wikiPicture(name, packName, tab).catch(() => null);
         if (wiki) list.push(wiki);
-        list.push(...(await commonsWithContext(name, packName)).slice(0, 3));
+        list.push(...(await commonsWithContext(name, packName, tab)).slice(0, 3));
         return list;
       };
       return { first: first!, extras, loadExtras };
     }
   }
 
-  const wiki = await wikiPicture(name, packName).catch(() => null);
+  const wiki = await wikiPicture(name, packName, tab).catch(() => null);
   if (wiki) {
-    loadExtras = async () => (await commonsWithContext(name, packName)).slice(0, 3);
+    loadExtras = async () => (await commonsWithContext(name, packName, tab)).slice(0, 3);
     return { first: wiki, extras, loadExtras };
   }
 
-  const commons = await commonsWithContext(name, packName);
+  const commons = await commonsWithContext(name, packName, tab);
   return { first: commons[0] ?? null, extras: commons.slice(1, 4), loadExtras: null };
 }
 
@@ -932,10 +960,18 @@ async function verifyAndSwap(
   }
   // Ничего верного не нашли: лучше пустая плашка, чем чужая картинка.
   store.dropAutoImage(key);
+  store.saveAutoMiss(key);
   refreshAuto(name, null);
 }
 
-async function resolveItemPicture(name: string, anime = false, high = false, packName = ""): Promise<string | null> {
+async function resolveItemPicture(
+  name: string,
+  anime = false,
+  high = false,
+  packName = "",
+  tab = "",
+  verify = true,
+): Promise<string | null> {
   if (!AUTO_ENABLED) return null;
   const key = autoKey(name);
   if (!key) return null;
@@ -947,15 +983,16 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
 
   const job = autoSlot(async () => {
     try {
-      const { first, extras, loadExtras } = await primaryPicture(name, anime, high, packName);
+      const { first, extras, loadExtras } = await primaryPicture(name, anime, high, packName, tab);
       if (!first) {
         store.saveAutoMiss(key);
         return null;
       }
       const image = await ingestImage(first.url, "item", first);
-      const checker = IMAGE_CHECK ? "pending" : "heuristic";
+      // Библиотека качает без vision: на экране картинка всё равно будет проверена.
+      const checker = IMAGE_CHECK && verify ? "pending" : "heuristic";
       store.saveAutoImage(key, image.hash, checker);
-      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title);
+      if (IMAGE_CHECK && verify) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title);
       return image.hash;
     } catch {
       store.saveAutoMiss(key);
@@ -986,6 +1023,51 @@ function recheckPending(name: string, packName: string) {
   void verifyAndSwap(key, name, packName, info.hash, [], null, true, title).finally(() => pendingChecks.delete(key));
 }
 
+/* ── библиотека картинок: тихо прогреваем весь каталог ── */
+
+const LIBRARY_ENABLED = process.env.LOT_LIBRARY === "1" && AUTO_ENABLED;
+const library = { running: false, total: 0, done: 0, skipped: 0, startedAt: 0 };
+
+async function warmLibrary() {
+  if (!LIBRARY_ENABLED || library.running) return;
+  const unique = new Map<string, { name: string; pack: any }>();
+  for (const pack of content.packs) {
+    if (pack.profile === "internet-ratings") continue; // кино берёт постеры у TMDb
+    for (const name of pack.items) {
+      const key = autoKey(name);
+      if (!unique.has(key)) unique.set(key, { name, pack });
+    }
+  }
+
+  library.running = true;
+  library.total = unique.size;
+  library.done = 0;
+  library.skipped = 0;
+  library.startedAt = Date.now();
+  console.log(`[library] прогрев: ${unique.size} предметов, по одному в 0.5 с`);
+
+  let index = 0;
+  for (const [key, { name, pack }] of unique) {
+    index += 1;
+    if (store.autoImage(key) || store.autoMissed(key, AUTO_MISS_TTL)) {
+      library.skipped += 1;
+      continue;
+    }
+    try {
+      // Без vision: проверка случится при первом появлении лота на экране.
+      await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name, pack.tab, false);
+    } catch {
+      /* пропускаем — вернёмся в следующем проходе */
+    }
+    library.done += 1;
+    if (index % 100 === 0) console.log(`[library] ${index}/${unique.size}`);
+    await Bun.sleep(500);
+  }
+
+  library.running = false;
+  console.log(`[library] готово: ${unique.size} (пропущено ${library.skipped})`);
+}
+
 /** Подтянуть из кеша всё, что уже найдено для выбранного пака. */
 function autoFor(room: any) {
   const pack = room.customPack ?? content.packById.get(room.packId);
@@ -1012,7 +1094,7 @@ async function prefetchPack(room: any) {
     for (;;) {
       const name = queue.shift();
       if (!name) return;
-      const hash = await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name);
+      const hash = await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name, pack.tab);
       if (!hash) continue;
       room.auto = { ...(room.auto ?? {}), [name]: hash };
       creditsFor(room);
@@ -1040,16 +1122,40 @@ function schedulePrefetch(room: any, delay = 1500) {
   room.prefetchTimer?.unref?.();
 }
 
+const verifiedOnScreen = new Set<string>();
+
 /** Текущий лот важнее остальных: если картинки нет, ищем именно его. */
 async function ensureLotPicture(room: any) {
   if (!AUTO_ENABLED || room.phase !== "auction") return;
   const pack = room.customPack ?? content.packById.get(room.packId);
   const lot = room.lots[room.lotIndex];
   if (!pack || !lot || pack.profile === "internet-ratings") return;
-  if (room.items?.[pack.id]?.[lot.name] || room.auto?.[lot.name] || lot.poster) return;
+  if (room.items?.[pack.id]?.[lot.name] || lot.poster) return;
+
+  const known = room.auto?.[lot.name];
+  if (known) {
+    // Библиотека качала без модели: первый показ на экране — повод проверить и заменить.
+    const key = autoKey(lot.name);
+    if (IMAGE_CHECK && !verifiedOnScreen.has(key)) {
+      const info = store.autoImageInfo(key);
+      if (info?.checker === "heuristic") {
+        verifiedOnScreen.add(key);
+        void (async () => {
+          try {
+            const { extras, loadExtras } = await primaryPicture(lot.name, pack.tab === "ANIME", true, pack.name, pack.tab);
+            const title = store.imageByHash(info.hash)?.title ?? "";
+            await verifyAndSwap(key, lot.name, pack.name, info.hash, extras, loadExtras, true, title);
+          } catch {
+            verifiedOnScreen.delete(key);
+          }
+        })();
+      }
+    }
+    return;
+  }
   // Текущий лот — вне очереди прогрева и вне общей очереди источников.
   if (Array.isArray(room.prefetchQueue)) room.prefetchQueue.unshift(lot.name);
-  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true, pack.name);
+  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true, pack.name, pack.tab);
   if (!hash) return;
   room.auto = { ...(room.auto ?? {}), [lot.name]: hash };
   creditsFor(room);
@@ -1836,6 +1942,7 @@ const server = Bun.serve({
         sessions: sessions.size,
         db: store.dbStats(),
         ai: aiStatus(),
+        library: { enabled: LIBRARY_ENABLED, running: library.running, total: library.total, done: library.done, skipped: library.skipped },
         assets: ASSET_VERSION,
       });
     }
@@ -2115,6 +2222,8 @@ setInterval(async () => {
     await unlink(join(IMAGE_DIR, `${hash}-192.webp`)).catch(() => {});
   }
 }, 10 * 60 * 1000);
+
+if (LIBRARY_ENABLED) setTimeout(() => void warmLibrary(), 45_000);
 
 console.log(
   `The Lot · http://${HOST === "0.0.0.0" ? "localhost" : HOST}:${PORT} · паков ${content.packs.length} · ` +
