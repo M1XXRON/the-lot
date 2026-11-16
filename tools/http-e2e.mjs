@@ -515,7 +515,7 @@ async function lotImage(server) {
 
   // ждём авто-постер: он тоже приходит сам, ручной должен его перекрыть
   let autoHash = "";
-  for (let i = 0; i < 80; i += 1) {
+  for (let i = 0; i < 150; i += 1) {
     page = await host.html(`/r/${code}`);
     autoHash = page.html.match(/lot-plate--photo"><img src="\/img\/x\/([a-f0-9]{24})-342\.webp"/)?.[1] ?? "";
     if (autoHash) break;

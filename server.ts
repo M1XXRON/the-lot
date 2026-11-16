@@ -693,10 +693,14 @@ async function anilistPictures(name: string, high = false) {
   const body: any = await response.json().catch(() => null);
   const list = Array.isArray(body?.data?.Page?.characters) ? body.data.Page.characters : [];
   const wanted = tokensOf(query);
+  const exact = query.toLowerCase().replace(/\s+/g, " ").trim();
   return list
     .filter((character: any) => character?.image?.large)
     .filter((character: any) => {
-      const got = tokensOf(String(character.name?.full ?? ""));
+      const name = String(character.name?.full ?? "");
+      // Короткие имена («L») не дают токенов — сравниваем строку целиком.
+      if (wanted.length === 0) return name.toLowerCase().replace(/\s+/g, " ").trim() === exact;
+      const got = tokensOf(name);
       return wanted.some((token) => tokenSimilar(token, got));
     })
     .map((character: any) => ({
