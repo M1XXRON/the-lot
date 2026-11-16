@@ -1201,6 +1201,9 @@ async function prefetchPack(room: any) {
   if (!AUTO_ENABLED) return;
   const pack = room.customPack ?? content.packById.get(room.packId);
   if (!pack || pack.profile === "internet-ratings") return;
+  // Фандомы не любят пачки: супергеройские паки греет библиотека, а на экране
+  // текущий лот разрешается отдельно и вне очереди.
+  if (FANDOM_PACKS[pack.id]) return;
   const queue = (pack.items as string[]).filter(
     (name) => !room.auto?.[name] && !room.items?.[pack.id]?.[name] && !store.autoMissed(autoKey(name), AUTO_MISS_TTL),
   );
