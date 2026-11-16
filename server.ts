@@ -22,6 +22,7 @@ const ASSET_FILES = [
   "public/sound.js",
   "public/sw.js",
   "public/favicon.svg",
+  "packs.json",
   "public/vendor/datastar-1.0.5.js",
 ];
 let ASSET_VERSION = "1";

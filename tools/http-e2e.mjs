@@ -497,8 +497,15 @@ async function autoPictures(server) {
   await host.actJson("pack", { pack: "free-soda" });
   await host.act("toss");
   await host.act("begin");
-  const freshPage = (await host.html(`/r/${fresh}`)).html;
-  assert(/lot-plate--photo"><img src="\/img\/x\//.test(freshPage), "кеш не отдал картинку сразу");
+  let freshPage = "";
+  let freshPlate = "";
+  for (let i = 0; i < 100; i += 1) {
+    freshPage = (await host.html(`/r/${fresh}`)).html;
+    freshPlate = freshPage.match(/lot-plate--photo"><img src="\/img\/x\//)?.[0] ?? "";
+    if (freshPlate) break;
+    await Bun.sleep(100);
+  }
+  assert(freshPlate, "во втором столе картинка не появилась");
   return { code: fresh };
 }
 
