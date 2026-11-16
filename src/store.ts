@@ -51,6 +51,23 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS custom_packs_owner ON custom_packs(owner, used_at DESC);
+
+  CREATE TABLE IF NOT EXISTS images (
+    hash TEXT PRIMARY KEY,
+    source TEXT NOT NULL,
+    mime TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    height INTEGER NOT NULL,
+    created_at INTEGER NOT NULL
+  );
+
+  CREATE TABLE IF NOT EXISTS pack_covers (
+    owner TEXT NOT NULL,
+    pack TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (owner, pack)
+  );
 `);
 
 // Миграция для баз, созданных до появления истории игрока.
@@ -225,6 +242,57 @@ export function forgetCustomPack(owner: string, id: string): boolean {
   if (!owner || !id) return false;
   const result = dropPackStmt.run(owner, id);
   return Number(result.changes ?? 0) > 0;
+}
+
+/* ─────────────── картинки: обложки паков ─────────────── */
+
+export type StoredImage = { hash: string; source: string; mime: string; width: number; height: number };
+
+const insertImage = db.prepare(
+  "INSERT INTO images (hash, source, mime, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING",
+);
+const getImage = db.prepare("SELECT hash, source, mime, width, height FROM images WHERE hash = ?");
+const setCoverStmt = db.prepare(
+  "INSERT INTO pack_covers (owner, pack, hash, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, pack) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
+);
+const dropCoverStmt = db.prepare("DELETE FROM pack_covers WHERE owner = ? AND pack = ?");
+const coversStmt = db.prepare("SELECT pack, hash FROM pack_covers WHERE owner = ?");
+const pruneImagesStmt = db.prepare(
+  "DELETE FROM images WHERE created_at < ? AND hash NOT IN (SELECT hash FROM pack_covers) RETURNING hash",
+);
+
+/** @param {StoredImage} image */
+export function saveImage(image: StoredImage) {
+  insertImage.run(image.hash, image.source, image.mime, image.width, image.height, Date.now());
+}
+
+/** @param {string} hash */
+export function imageByHash(hash: string): StoredImage | null {
+  return (getImage.get(hash) as StoredImage | null) ?? null;
+}
+
+/** @param {string} owner @param {string} pack @param {string} hash */
+export function setPackCover(owner: string, pack: string, hash: string) {
+  setCoverStmt.run(owner, pack, hash, Date.now());
+}
+
+/** @param {string} owner @param {string} pack */
+export function clearPackCover(owner: string, pack: string) {
+  dropCoverStmt.run(owner, pack);
+}
+
+/** @param {string} owner @returns {Record<string, string>} */
+export function packCovers(owner: string): Record<string, string> {
+  if (!owner) return {};
+  const out: Record<string, string> = {};
+  for (const row of coversStmt.all(owner) as { pack: string; hash: string }[]) out[row.pack] = row.hash;
+  return out;
+}
+
+/** Удаляет картинки, на которые больше никто не ссылается. @returns {string[]} */
+export function pruneImages(olderThan: number): string[] {
+  const rows = pruneImagesStmt.all(olderThan) as { hash: string }[];
+  return rows.map((row) => row.hash);
 }
 
 /** @param {string} sid @param {string | null} room @param {number | null} seat */

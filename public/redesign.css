@@ -334,6 +334,72 @@
   .custom-library-drop { color: var(--muted); font-size: 1rem; line-height: 1; }
   .custom-library-drop:hover { color: var(--ink); }
 
+  /* Обложки паков: картинка живёт в квадратной плитке, как марка на бумаге */
+  .category-emoji.has-cover,
+  .selected-emoji.has-cover {
+    padding: 0;
+    overflow: hidden;
+    border-color: var(--brass);
+    background: var(--paper-sunk);
+  }
+
+  .category-emoji.has-cover img,
+  .selected-emoji.has-cover img {
+    display: block;
+    inline-size: 100%;
+    block-size: 100%;
+    object-fit: cover;
+    filter: saturate(0.94) contrast(1.02);
+  }
+
+  .selected-emoji.has-cover {
+    flex: 0 0 2.4rem;
+    inline-size: 2.4rem;
+    aspect-ratio: 1;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-xs);
+  }
+
+  .selected-pack .cover-open {
+    flex: 0 0 auto;
+    min-block-size: 2rem;
+    margin-inline-start: 0.4rem;
+    padding-inline: 0.5rem;
+    border-style: dashed;
+    color: var(--brass-ink);
+    font-size: 0.62rem;
+  }
+
+  .selected-pack .cover-open:hover { border-style: solid; }
+
+  /* Диалог обложки */
+  .cover-dialog { inline-size: min(calc(100% - 2rem), 26rem); }
+  .cover-dialog h2 { margin-block: 0.2rem 0.9rem; font-size: 1.5rem; }
+
+  .cover-preview {
+    display: grid;
+    place-items: center;
+    inline-size: 6.75rem;
+    aspect-ratio: 1;
+    margin-block-end: 0.9rem;
+    border: 1px solid var(--rule-strong);
+    border-radius: var(--r-xs);
+    background: var(--paper-sunk);
+    overflow: hidden;
+  }
+
+  .cover-preview img { inline-size: 100%; block-size: 100%; object-fit: cover; }
+  .cover-preview[hidden] { display: none; }
+  .cover-target { margin-block: -0.4rem 0.8rem; color: var(--brass-ink); font-family: var(--font-mono); font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; }
+  .cover-target:empty { display: none; }
+  .cover-preview:not([hidden]) { box-shadow: inset 0 0 0 3px var(--paper-raised), inset 0 0 0 4px var(--brass); }
+
+  .cover-hint { margin-block-end: 1rem; color: var(--muted); font-size: 0.82rem; line-height: 1.45; }
+  .cover-form { display: grid; gap: 0.75rem; }
+  .cover-form .primary-button { justify-content: center; }
+  #cover-clear-form { margin-block-start: 0.6rem; }
+  #cover-clear-form[hidden] { display: none; }
+
   /* Последние вердикты на лендинге */
   .verdicts {
     inline-size: 100%;

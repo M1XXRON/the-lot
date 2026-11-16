@@ -2,6 +2,81 @@
 import { assert, client, roomCodeFrom, startServer } from "./lib.mjs";
 
 const marker = (html, text) => html.includes(text);
+
+/* ── тестовый источник картинок: локальный сервер с валидным PNG ── */
+
+function makePng(width, height) {
+  const raw = new Uint8Array((width * 3 + 1) * height);
+  let offset = 0;
+  for (let y = 0; y < height; y += 1) {
+    raw[offset++] = 0;
+    for (let x = 0; x < width; x += 1) {
+      raw[offset++] = Math.round((x * 255) / width);
+      raw[offset++] = Math.round((y * 255) / height);
+      raw[offset++] = 96;
+    }
+  }
+  const ihdr = new Uint8Array(13);
+  const head = new DataView(ihdr.buffer);
+  head.setUint32(0, width);
+  head.setUint32(4, height);
+  ihdr[8] = 8;
+  ihdr[9] = 2;
+  const chunk = (type, data) => {
+    const out = new Uint8Array(12 + data.length);
+    const view = new DataView(out.buffer);
+    view.setUint32(0, data.length);
+    out.set(new TextEncoder().encode(type), 4);
+    out.set(data, 8);
+    view.setUint32(8 + data.length, Bun.hash.crc32(out.subarray(4, 8 + data.length)) >>> 0);
+    return out;
+  };
+  // PNG требует zlib-обёртку, а Bun.deflateSync даёт голый deflate: добавляем заголовок и adler32.
+  const deflated = new Uint8Array(Bun.deflateSync(raw));
+  const zlib = new Uint8Array(deflated.length + 6);
+  zlib[0] = 0x78;
+  zlib[1] = 0x9c;
+  zlib.set(deflated, 2);
+  let a = 1;
+  let b = 0;
+  for (const byte of raw) {
+    a = (a + byte) % 65521;
+    b = (b + a) % 65521;
+  }
+  new DataView(zlib.buffer).setUint32(zlib.length - 4, ((b << 16) | a) >>> 0);
+
+  const parts = [
+    new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    chunk("IHDR", ihdr),
+    chunk("IDAT", zlib),
+    chunk("IEND", new Uint8Array()),
+  ];
+  const total = parts.reduce((sum, part) => sum + part.length, 0);
+  const png = new Uint8Array(total);
+  let cursor = 0;
+  for (const part of parts) {
+    png.set(part, cursor);
+    cursor += part.length;
+  }
+  return png;
+}
+
+const PNG = makePng(240, 180);
+const PNG_ALT = makePng(120, 90);
+const imageSource = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  fetch(request) {
+    const url = new URL(request.url);
+    if (url.pathname === "/cover.png") return new Response(PNG, { headers: { "content-type": "image/png" } });
+    if (url.pathname === "/cover2.png") return new Response(PNG_ALT, { headers: { "content-type": "image/png" } });
+    if (url.pathname === "/redirect") return new Response(null, { status: 302, headers: { location: "/cover2.png" } });
+    if (url.pathname === "/text") return new Response("not an image at all", { headers: { "content-type": "image/png" } });
+    if (url.pathname === "/big") return new Response(new Uint8Array(7 * 1024 * 1024), { headers: { "content-type": "image/png" } });
+    return new Response("nope", { status: 404 });
+  },
+});
+const IMAGE_BASE = `http://127.0.0.1:${imageSource.port}`;
 /** Токен для проверки операторского /health: тест не зависит от окружения. */
 const OPS_TOKEN = "ops-test";
 
@@ -268,6 +343,57 @@ async function discoverability(server) {
   return { code: "sitemap" };
 }
 
+/** Обложка: ссылка → скачивание → webp в хранилище → плитка в каталоге. */
+async function packCover(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+
+  const upload = await host.form("/act/cover", { pack: "free-soda", url: `${IMAGE_BASE}/cover.png` });
+  assert(upload.status === 303, `обложка вернула ${upload.status}`);
+  const lobby = await host.html(`/r/${code}`);
+  const hash = lobby.html.match(/\/img\/x\/([a-f0-9]{24})-192\.webp/)?.[1];
+  assert(hash, "обложка не попала в лобби");
+  const coversJson = lobby.html.match(/id="pack-covers">([^<]*)</)?.[1];
+  assert(coversJson, "нет JSON обложек для каталога");
+  const covers = JSON.parse(coversJson);
+  assert(covers["free-soda"] === hash, "каталог не узнал обложку");
+
+  const image = await fetch(`${server.base}/img/x/${hash}-192.webp`);
+  assert(image.status === 200, `картинка вернула ${image.status}`);
+  assert((image.headers.get("content-type") ?? "") === "image/webp", "картинка не webp");
+  assert((image.headers.get("cache-control") ?? "").includes("immutable"), "картинка без immutable");
+  assert(image.headers.get("set-cookie") === null, "картинка ставит cookie");
+  const bytes = new Uint8Array(await image.arrayBuffer());
+  assert(bytes[0] === 0x52 && bytes[8] === 0x57, "в ответе не webp");
+  assert(bytes.length < 40 * 1024, `обложка слишком тяжёлая: ${bytes.length}`);
+
+  // редирект источника и враньё в content-type: решает магия байтов
+  await host.form("/act/cover", { pack: "free-candy", url: `${IMAGE_BASE}/redirect` });
+  const redirected = await host.html(`/r/${code}`);
+  const coversAfterRedirect = JSON.parse(redirected.html.match(/id="pack-covers">([^<]*)</)?.[1] ?? "{}");
+  assert(coversAfterRedirect["free-candy"] && coversAfterRedirect["free-candy"] !== hash, "обложка после редиректа не встала");
+  const afterText = await host.form("/act/cover", { pack: "free-soda", url: `${IMAGE_BASE}/text` });
+  assert(afterText.status === 303, "мусорный источник не обработан");
+  const kept = await host.html(`/r/${code}`);
+  assert(kept.html.includes(hash), "мусор затёр обложку");
+  await host.form("/act/cover", { pack: "free-soda", url: `${IMAGE_BASE}/big` });
+  const stillKept = await host.html(`/r/${code}`);
+  assert(stillKept.html.includes(hash), "файл больше лимита затёр обложку");
+
+  // обложка принадлежит игроку: новый стол её видит
+  const second = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code: fresh } = roomCodeFrom(second);
+  const freshLobby = await host.html(`/r/${fresh}`);
+  assert(freshLobby.html.includes(hash), "обложка не переехала в новый стол");
+
+  const clear = await host.form("/act/cover-clear", { pack: "free-soda" });
+  assert(clear.status === 303, "сброс обложки не сработал");
+  const cleared = await host.html(`/r/${fresh}`);
+  assert(!cleared.html.includes(`/img/x/${hash}-192.webp`), "обложка не сбросилась");
+  return { code };
+}
+
 /** Каталог едет отдельным кешируемым ответом, а комната остаётся лёгкой. */
 async function catalog(server) {
   const landing = await (await fetch(`${server.base}/`)).text();
@@ -356,9 +482,10 @@ async function playLocalWith(host, packId) {
   return code;
 }
 
-const server = await startServer({ env: { LOT_OPS_TOKEN: OPS_TOKEN } });
+const server = await startServer({ env: { LOT_OPS_TOKEN: OPS_TOKEN, LOT_IMAGE_ALLOW_LOCAL: "1", LOT_IMAGES: "/tmp/lot-e2e-images" } });
 let failures = 0;
 const checks = [
+  ["pack cover", () => packCover(server)],
   ["local game", () => playLocal(server)],
   ["online game", () => playOnline(server)],
   ["human judge", () => humanJudge(server)],
@@ -387,6 +514,7 @@ for (const [name, run] of checks) {
 }
 
 await server.stop();
+imageSource.stop(true);
 if (failures) {
   console.error(`http-e2e: провалено ${failures}`);
   process.exit(1);

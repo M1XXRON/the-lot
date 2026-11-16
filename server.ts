@@ -1,5 +1,8 @@
 // The Lot — один процесс: лендинг, комната, SSE-патчи Datastar, действия, статика.
-import { resolve, normalize } from "node:path";
+import { mkdirSync } from "node:fs";
+import { unlink } from "node:fs/promises";
+import { resolve, normalize, join } from "node:path";
+import { lookup } from "node:dns/promises";
 import * as engine from "./src/engine.js";
 import * as content from "./src/content.js";
 import * as store from "./src/store.ts";
@@ -43,7 +46,7 @@ const PID_MAX_AGE = 60 * 60 * 24 * 365;
 /** Потолок живых столов: остальное все равно уберёт уборка. */
 const ROOM_LIMIT = 400;
 
-type Session = { room: string | null; seat: number | null };
+type Session = { room: string | null; seat: number | null; notice?: string };
 type Room = ReturnType<typeof engine.createRoom>;
 
 const sessions = new Map<string, Session>();
@@ -272,12 +275,162 @@ function persist(room: any) {
   store.saveRoom(room);
 }
 
+/* ── картинки: обложки паков ── */
+
+const IMAGE_DIR = resolve(process.env.LOT_IMAGES ?? "data/images");
+mkdirSync(IMAGE_DIR, { recursive: true });
+const IMAGE_MAX_BYTES = 6 * 1024 * 1024;
+/** Только для e2e: разрешает http и локальные адреса тестового сервера. */
+const IMAGE_ALLOW_LOCAL = process.env.LOT_IMAGE_ALLOW_LOCAL === "1";
+
+class CoverError extends Error {
+  constructor(readonly ru: string, readonly en: string) {
+    super(ru);
+  }
+}
+
+/** Приватные, петлевые и служебные диапазоны: через них нельзя ходить за картинкой. */
+function privateAddress(address: string): boolean {
+  if (address.includes(":")) {
+    const value = address.toLowerCase();
+    if (value === "::" || value === "::1") return true;
+    if (value.startsWith("fe80:") || value.startsWith("fc") || value.startsWith("fd")) return true;
+    const mapped = value.match(/^::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    return mapped ? privateAddress(mapped[1]!) : false;
+  }
+  return (
+    /^(0|10|127|169\.254|192\.168)\./.test(address) ||
+    /^172\.(1[6-9]|2\d|3[01])\./.test(address) ||
+    /^100\.(6[4-9]|[7-9]\d|1[01]\d|12[0-7])\./.test(address) ||
+    /^(22[4-9]|23\d|24\d|25[0-5])\./.test(address)
+  );
+}
+
+/**
+ * Ссылка должна вести в публичный https. DNS проверяем до запроса;
+ * окно между проверкой и соединением (rebinding) осознанно оставлено —
+ * для картинок цена атаки выше, чем риск.
+ */
+async function checkImageHost(url: URL) {
+  if (url.protocol !== "https:" && !(IMAGE_ALLOW_LOCAL && url.protocol === "http:")) {
+    throw new CoverError("Ссылка должна начинаться с https://.", "The link must start with https://.");
+  }
+  if (IMAGE_ALLOW_LOCAL) return;
+  if (url.username || url.password) throw new CoverError("Ссылки с логином и паролем не подойдут.", "Links with credentials are not accepted.");
+  const host = url.hostname.replace(/^\[|\]$/g, "");
+  const literal = /^[\d.]+$/.test(host) || host.includes(":");
+  const addresses = literal
+    ? [host]
+    : (await lookup(host, { all: true, verbatim: true }).catch(() => [])).map((row) => row.address);
+  if (addresses.length === 0) throw new CoverError("Не удалось найти этот адрес.", "That address could not be resolved.");
+  if (addresses.some((address) => privateAddress(address))) {
+    throw new CoverError("Локальные адреса закрыты.", "Local addresses are off limits.");
+  }
+}
+
+/** Тип — по магии байтов, а не по заголовку источника. */
+function sniffImageType(bytes: Uint8Array) {
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return "image/png";
+  if (bytes[0] === 0x47 && bytes[1] === 0x49 && bytes[2] === 0x46) return "image/gif";
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46 && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return "image/webp";
+  if (bytes[0] === 0x42 && bytes[1] === 0x4d) return "image/bmp";
+  const ftyp = String.fromCharCode(...bytes.subarray(4, 12));
+  if (ftyp.startsWith("ftyp") && /(avi[fs]|heic|heif)/.test(ftyp.slice(4))) return "image/avif";
+  return null;
+}
+
+/** Скачивает картинку по ссылке и раскладывает её в два webp-размера. */
+async function ingestImage(raw: string) {
+  let current: URL;
+  try {
+    current = new URL(raw);
+  } catch {
+    throw new CoverError("Это не похоже на ссылку.", "That does not look like a link.");
+  }
+
+  for (let hop = 0; hop <= 3; hop += 1) {
+    await checkImageHost(current);
+    let response: Response;
+    try {
+      response = await fetch(current, {
+        redirect: "manual",
+        headers: { accept: "image/*", "user-agent": "TheLot/1.0 (+https://lot.bunker9.lol)" },
+        signal: AbortSignal.timeout(9000),
+      });
+    } catch {
+      throw new CoverError("Источник не ответил.", "The source did not respond.");
+    }
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) throw new CoverError("Источник перенаправил в пустоту.", "The source redirected nowhere.");
+      current = new URL(location, current);
+      continue;
+    }
+    if (!response.ok) throw new CoverError(`Источник ответил ${response.status}.`, `The source replied ${response.status}.`);
+    if (Number(response.headers.get("content-length") ?? 0) > IMAGE_MAX_BYTES) {
+      throw new CoverError("Картинка больше 6 МБ.", "The image is larger than 6 MB.");
+    }
+    const reader = response.body?.getReader();
+    if (!reader) throw new CoverError("Источник отдал пустой ответ.", "The source returned an empty response.");
+    const chunks: Uint8Array[] = [];
+    let total = 0;
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > IMAGE_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        throw new CoverError("Картинка больше 6 МБ.", "The image is larger than 6 MB.");
+      }
+      chunks.push(value);
+    }
+    const bytes = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    if (!sniffImageType(bytes)) {
+      throw new CoverError("Это не картинка: нужен JPEG, PNG, WebP, GIF или AVIF.", "That is not an image: JPEG, PNG, WebP, GIF or AVIF only.");
+    }
+    let meta: { width?: number; height?: number; format?: string } | null = null;
+    try {
+      meta = await new Bun.Image(bytes).metadata();
+    } catch {
+      throw new CoverError("Картинка не читается.", "The image cannot be decoded.");
+    }
+    if (!meta?.width || !meta?.height) throw new CoverError("Картинка не читается.", "The image cannot be decoded.");
+
+    const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 24);
+    const small = await new Bun.Image(bytes).resize(96, 96, { fit: "inside" }).webp({ quality: 80 }).toBuffer();
+    const large = await new Bun.Image(bytes).resize(192, 192, { fit: "inside" }).webp({ quality: 82 }).toBuffer();
+    await Bun.write(join(IMAGE_DIR, `${hash}-96.webp`), small);
+    await Bun.write(join(IMAGE_DIR, `${hash}-192.webp`), large);
+    store.saveImage({ hash, source: current.toString(), mime: meta.format ?? "image", width: meta.width, height: meta.height });
+    return { hash, source: current.toString() };
+  }
+  throw new CoverError("Слишком много перенаправлений.", "Too many redirects.");
+}
+
+/** Обложки принадлежат хозяину стола: у гостя они просто видны. */
+function coversFor(room: any) {
+  const owner = hostPidOf(room);
+  room.covers = owner ? store.packCovers(owner) : {};
+  return room.covers;
+}
+
 /* ── свои паки ── */
 
 /** Хозяин стола — первый pid комнаты (в локальном режиме pid один на двоих). */
 function hostPidOf(room: any) {
   const owner = Array.isArray(room.pids) ? room.pids[0] : null;
   return typeof owner === "string" ? owner : "";
+}
+
+/** Пак из каталога или свой — только для них можно ставить обложку. */
+function knownPackId(room: any, id: string) {
+  return content.packById.has(id) || room.customPack?.id === id;
 }
 
 /** Список сохранённых паков живёт в комнате: он же уходит в патчи лобби. */
@@ -491,6 +644,7 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
     room.lang = langOf(request);
     room.pids = [pid, mode === "local" ? pid : null];
     libraryFor(room);
+    coversFor(room);
     if (mode === "local") {
       engine.fillLocalSeat(room);
       const second = langOf(request) === "en" ? "PLAYER 2" : "ИГРОК 2";
@@ -546,6 +700,50 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
   };
 
   switch (cmd) {
+    case "cover": {
+      if (!host) return fail(request, "Обложку ставит хозяин стола.", 403);
+      if (room.phase !== "lobby") return fail(request, "Драфт уже начался.", 409);
+      const back = `/r/${room.code}`;
+      const redirect = (message?: { ru: string; en: string } | string) => {
+        if (message) {
+          session.notice =
+            typeof message === "string" ? message : room.lang === "en" ? message.en : message.ru;
+        }
+        return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: back } });
+      };
+      if (!allow(`cover:${pid}`, 1 / 3, 8)) {
+        return redirect(room.lang === "en" ? "Too often — give it a moment." : "Слишком часто — подождите немного.");
+      }
+      const packId = typeof body.pack === "string" && body.pack ? String(body.pack).slice(0, 60) : room.packId;
+      if (!knownPackId(room, packId)) return redirect(room.lang === "en" ? "Unknown pack." : "Неизвестный пак.");
+      const url = typeof body.url === "string" ? body.url.trim().slice(0, 2000) : "";
+      if (!/^https?:\/\//i.test(url)) return redirect(room.lang === "en" ? "Paste a link to an image." : "Вставьте ссылку на картинку.");
+      try {
+        const image = await ingestImage(url);
+        const owner = hostPidOf(room) || pid;
+        store.setPackCover(owner, packId, image.hash);
+        room.covers = store.packCovers(owner);
+        persist(room);
+        broadcast(room, "full");
+        return redirect(room.lang === "en" ? "Cover updated." : "Обложка обновлена.");
+      } catch (error) {
+        if (error instanceof CoverError) return redirect({ ru: error.ru, en: error.en });
+        console.error("[cover]", error instanceof Error ? error.message : error);
+        return redirect(room.lang === "en" ? "Could not take that image." : "Не получилось взять картинку.");
+      }
+    }
+    case "cover-clear": {
+      if (!host) return fail(request, "Обложку меняет хозяин стола.", 403);
+      if (room.phase !== "lobby") return fail(request, "Драфт уже начался.", 409);
+      const packId = typeof body.pack === "string" && body.pack ? String(body.pack).slice(0, 60) : room.packId;
+      const owner = hostPidOf(room) || pid;
+      store.clearPackCover(owner, packId);
+      room.covers = store.packCovers(owner);
+      persist(room);
+      broadcast(room, "full");
+      session.notice = room.lang === "en" ? "Cover removed." : "Обложка убрана.";
+      return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: `/r/${room.code}` } });
+    }
     case "pack": {
       if (!host) return fail(request, "Пак выбирает хозяин стола.", 403);
       if (lobbyOnly) return fail(request, "Драфт уже начался.", 409);
@@ -888,6 +1086,20 @@ const server = Bun.serve({
       });
     }
 
+    if (path.startsWith("/img/x/")) {
+      const file = path.slice("/img/x/".length);
+      if (!/^[a-f0-9]{24}-(96|192)\.webp$/.test(file)) return new Response("Not found", { status: 404 });
+      const image = Bun.file(join(IMAGE_DIR, file));
+      if (!(await image.exists())) return new Response("Not found", { status: 404 });
+      return new Response(image, {
+        headers: {
+          ...SECURITY_HEADERS,
+          "Content-Type": "image/webp",
+          "Cache-Control": "public, max-age=31536000, immutable",
+        },
+      });
+    }
+
     if (path.startsWith("/img/tmdb/")) {
       const rest = path.slice("/img/tmdb/".length);
       const [head, ...tail] = rest.split("/");
@@ -1020,9 +1232,12 @@ const server = Bun.serve({
       session.seat = seat;
       store.rememberSession(sid, room.code, seat);
       libraryFor(room);
+      coversFor(room);
       const pageView: any = engine.view(room, sid, origin);
       pageView.lang = langOf(request);
-      return withSid(html(roomPage(pageView)));
+      const notice = session.notice ?? "";
+      session.notice = undefined;
+      return withSid(html(roomPage(pageView, notice)));
     }
 
     if (path === "/favicon.ico") return new Response(null, { status: 204, headers: SECURITY_HEADERS });
@@ -1034,7 +1249,8 @@ const server = Bun.serve({
 /* ─────────────────────── уборка ─────────────────────── */
 
 const MAX_AGE = 12 * 60 * 60 * 1000;
-setInterval(() => {
+const IMAGE_TTL = 90 * 24 * 60 * 60 * 1000;
+setInterval(async () => {
   const now = Date.now();
   for (const [code, room] of rooms) {
     const stale = now - room.updatedAt > MAX_AGE;
@@ -1051,6 +1267,11 @@ setInterval(() => {
   const stale = now - 10 * 60 * 1000;
   for (const [key, bucket] of buckets) {
     if (bucket.updated < stale) buckets.delete(key);
+  }
+  // Картинки, на которые больше никто не ссылается, живут 90 дней.
+  for (const hash of store.pruneImages(now - IMAGE_TTL)) {
+    await unlink(join(IMAGE_DIR, `${hash}-96.webp`)).catch(() => {});
+    await unlink(join(IMAGE_DIR, `${hash}-192.webp`)).catch(() => {});
   }
 }, 10 * 60 * 1000);
 

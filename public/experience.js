@@ -52,6 +52,7 @@ async function fillCatalog() {
   }
   markCatalogSelection();
   applyCatalog();
+  applyCovers();
   markChips();
 }
 
@@ -112,6 +113,66 @@ document.addEventListener("input", (event) => {
   catalogState.query = normalize(event.target.value.trim());
   applyCatalog();
 });
+
+/* ── обложки паков: приходят hash-ем в JSON, карточки подставляет клиент ── */
+function catalogCovers() {
+  const node = document.getElementById("pack-covers");
+  if (!node) return {};
+  try {
+    const parsed = JSON.parse(node.textContent || "{}");
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function applyCovers() {
+  const covers = catalogCovers();
+  for (const card of document.querySelectorAll("#pack-grid .category-card")) {
+    const emoji = card.querySelector(".category-emoji");
+    if (!emoji) continue;
+    const hash = covers[card.dataset.pack] || "";
+    const image = emoji.querySelector("img");
+    if (hash) {
+      if (image && image.dataset.hash === hash) continue;
+      emoji.textContent = "";
+      const img = document.createElement("img");
+      img.src = `/img/x/${hash}-96.webp`;
+      img.alt = "";
+      img.width = 36;
+      img.height = 36;
+      img.loading = "lazy";
+      img.decoding = "async";
+      img.dataset.hash = hash;
+      emoji.appendChild(img);
+      emoji.classList.add("has-cover");
+    } else if (image) {
+      emoji.textContent = emoji.dataset.glyph || "";
+      emoji.classList.remove("has-cover");
+    }
+  }
+}
+
+/* ── диалог обложки: подставляем пак, который сейчас выбран ── */
+function prepareCover(dialog, trigger) {
+  const pack = trigger.dataset.pack || "";
+  const cover = trigger.dataset.cover || "";
+  for (const input of dialog.querySelectorAll('input[name="pack"]')) input.value = pack;
+  const preview = dialog.querySelector("#cover-preview");
+  const image = preview?.querySelector("img");
+  if (preview && image) {
+    preview.hidden = !cover;
+    image.src = cover ? `/img/x/${cover}-192.webp` : "";
+    image.alt = cover ? trigger.dataset.label || "" : "";
+  }
+  const clear = dialog.querySelector("#cover-clear-form");
+  if (clear) clear.hidden = !cover;
+  const target = dialog.querySelector("#cover-target");
+  if (target) target.textContent = trigger.dataset.label || "";
+  const url = dialog.querySelector('input[name="url"]');
+  if (url) url.value = "";
+  setTimeout(() => url?.focus(), 60);
+}
 
 /* ── клавиатура: B — ставка, P — пас, +/− — стартовая ставка ── */
 document.addEventListener("keydown", (event) => {
@@ -193,7 +254,10 @@ function bind() {
     const open = event.target.closest("[data-open]");
     if (open) {
       const dialog = document.getElementById(open.dataset.open || "");
-      if (dialog instanceof HTMLDialogElement && !dialog.open) dialog.showModal();
+      if (dialog instanceof HTMLDialogElement) {
+        if (open.dataset.open === "cover") prepareCover(dialog, open);
+        if (!dialog.open) dialog.showModal();
+      }
       return;
     }
 
@@ -217,6 +281,17 @@ function bind() {
       else if (expr.includes("/act/toss")) sound()?.play("coin");
       else if (expr.includes("/act/begin")) sound()?.play("coin");
       else sound()?.play("tap");
+    }
+  });
+
+  // Долгий ответ: форма уходит на сервер за картинкой — показываем, что идёт работа.
+  document.addEventListener("submit", (event) => {
+    const form = event.target;
+    if (!(form instanceof HTMLFormElement)) return;
+    const button = form.querySelector("button[data-busy]");
+    if (button && form.checkValidity()) {
+      button.disabled = true;
+      button.textContent = button.dataset.busy || "";
     }
   });
 
@@ -247,6 +322,7 @@ document.addEventListener("DOMContentLoaded", () => {
   bind();
   fillCatalog();
   applyCatalog();
+  applyCovers();
   markChips();
   watchWinner();
 
@@ -258,6 +334,7 @@ document.addEventListener("DOMContentLoaded", () => {
     requestAnimationFrame(() => {
       scheduled = false;
       fillCatalog();
+      applyCovers();
       applyCatalog();
       markChips();
       watchWinner();

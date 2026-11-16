@@ -344,7 +344,7 @@ ${scripts()}
 </html>`;
 }
 
-export function roomPage(view: View) {
+export function roomPage(view: View, notice = "") {
   const lang = (view.lang ?? "ru") as Lang;
   const t = makeT(lang);
   return `${head(`${view.pack.name} · The Lot`, lang)}
@@ -353,7 +353,7 @@ export function roomPage(view: View) {
 ${renderRoom(view)}
 </main>
 ${rulesDialog(t)}
-<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="toast${notice ? " is-visible" : ""}" id="toast" role="status" aria-live="polite">${esc(notice)}</div>
 ${scripts()}
 </body>
 </html>`;
@@ -451,7 +451,7 @@ function packCard(view: View, pack: any) {
       aria-pressed="${selected}"
       data-tab="${esc(pack.tab)}" data-search="${esc(pack.search)}" data-pack="${esc(pack.id)}"
       ${on("pack", { pack: pack.id })}>
-    <span class="category-emoji" aria-hidden="true">${esc(pack.emoji)}</span>
+    <span class="category-emoji" data-glyph="${esc(pack.emoji)}" aria-hidden="true">${esc(pack.emoji)}</span>
     <span class="category-copy">
       <span class="category-name-line">
         <span class="category-title">${esc(pack.name)}</span>
@@ -495,9 +495,14 @@ function lobbySide(view: View) {
 
   return `<footer class="category-footer" id="lobby-side">
     <div class="selected-pack">
-      <span class="selected-emoji" aria-hidden="true">${esc(view.pack.emoji)}</span>
+      <span class="selected-emoji${view.pack.cover ? " has-cover" : ""}" aria-hidden="true">${
+        view.pack.cover
+          ? `<img src="/img/x/${esc(view.pack.cover)}-192.webp" alt="" width="40" height="40" decoding="async">`
+          : esc(view.pack.emoji)
+      }</span>
       <span class="selected-name">${esc(view.pack.name)}</span>
       <span class="selected-count">${view.pack.count} ${esc(units(t, (view.lang ?? "ru") as Lang, "item", view.pack.count))}</span>
+      <button class="text-button cover-open" type="button" data-open="cover" data-pack="${esc(view.pack.id)}" data-cover="${esc(view.pack.cover ?? "")}" data-label="${esc(`${view.pack.emoji} ${view.pack.name}`)}">${esc(t("cover.open"))}</button>
     </div>
     <div class="judge-switch" role="group" aria-label="${esc(t("common.rules"))}">
       <button type="button" class="judge-option${auto ? " is-selected" : ""}" aria-pressed="${auto}" ${on("judge", { mode: "auto" })}>
@@ -640,7 +645,34 @@ function renderLobby(view: View) {
   </div>
   ${lobbySide(view)}
   <form id="custom-clear-form" method="post" action="/act/custom-clear"></form>
+  ${coverDialog(view)}
+  <script type="application/json" id="pack-covers">${JSON.stringify(view.covers ?? {}).replace(/</g, "\\u003c")}</script>
 </section>`;
+}
+
+/** Хозяин стола вставляет ссылку — дом качает картинку и хранит её у себя. */
+function coverDialog(view: View) {
+  if (!view.host) return "";
+  const t = makeT((view.lang ?? "ru") as Lang);
+  return `<dialog class="modal-card cover-dialog" id="cover" aria-labelledby="cover-title">
+    <form method="dialog"><button class="modal-close" aria-label="${esc(t("common.close"))}">×</button></form>
+    <p class="eyebrow">${esc(t("cover.kicker"))}</p>
+    <h2 id="cover-title">${esc(t("cover.title"))}</h2>
+    <p class="cover-target" id="cover-target"></p>
+    <figure class="cover-preview" id="cover-preview" hidden><img alt="" width="96" height="96" decoding="async"></figure>
+    <p class="cover-hint">${esc(t("cover.hint"))}</p>
+    <form class="cover-form" method="post" action="/act/cover" id="cover-form">
+      <input type="hidden" name="pack" value="">
+      <label class="field">${esc(t("cover.link"))}
+        <input type="url" name="url" placeholder="https://…" autocomplete="off" spellcheck="false" inputmode="url" required>
+      </label>
+      <button class="primary-button" type="submit" data-busy="${esc(t("cover.waiting"))}">${esc(t("cover.apply"))}</button>
+    </form>
+    <form method="post" action="/act/cover-clear" id="cover-clear-form" hidden>
+      <input type="hidden" name="pack" value="">
+      <button class="text-button" type="submit">${esc(t("cover.reset"))}</button>
+    </form>
+  </dialog>`;
 }
 
 /* ── монетка ── */
