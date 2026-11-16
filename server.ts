@@ -588,13 +588,13 @@ function autoKey(name: string) {
 }
 
 /** Аниме-персонажи: официальный арт из AniList (Википедия несвободные картинки не отдаёт). */
-let anilistChain: Promise<void> = Promise.resolve();
+let anilistLast = 0;
 
-/** AniList держит 90 запросов в минуту — пропускаем не чаще одного в 450 мс. */
-function anilistTick() {
-  const wait = anilistChain.then(() => new Promise<void>((resolve) => setTimeout(resolve, 700)));
-  anilistChain = wait;
-  return wait;
+/** AniList держит ~90 запросов в минуту; текущему лоту разрешаем идти вне очереди. */
+async function anilistTick(high = false) {
+  const wait = anilistLast + (high ? 250 : 700) - Date.now();
+  if (wait > 0) await Bun.sleep(wait);
+  anilistLast = Date.now();
 }
 
 function tokensOf(value: string) {
@@ -632,10 +632,10 @@ function tokenSimilar(token: string, list: string[]) {
   });
 }
 
-async function anilistPictures(name: string) {
+async function anilistPictures(name: string, high = false) {
   const query = name.replace(/\s+vs\.?\s+.*$/i, "").replace(/["'’]/g, "").trim().slice(0, 80);
   if (!query) return [];
-  await anilistTick();
+  await anilistTick(high);
   const response = await fetch(ANILIST_API, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", "user-agent": IMAGE_UA },
@@ -733,15 +733,38 @@ async function wikiPicture(name: string) {
  */
 type ImageCandidate = { url: string; author?: string; license?: string; page?: string };
 
-/** Собрать кандидатов по порядку доверия: арт, статья, свободные фото. */
-async function pictureCandidates(name: string, anime: boolean): Promise<ImageCandidate[]> {
-  const candidates: ImageCandidate[] = [];
-  if (anime) candidates.push(...(await anilistPictures(name).catch(() => [])));
+/**
+ * Первого кандидата отдаём сразу, остальных догружаем только если проверка
+ * забракует: у аниме это ещё арт-варианты, затем статья и свободные фото.
+ */
+async function primaryPicture(name: string, anime: boolean, high: boolean) {
+  let extras: ImageCandidate[] = [];
+  let loadExtras: (() => Promise<ImageCandidate[]>) | null = null;
+
+  if (anime) {
+    const art = await anilistPictures(name, high).catch(() => []);
+    if (art.length > 0) {
+      const [first, ...rest] = art;
+      extras = rest;
+      loadExtras = async () => {
+        const list: ImageCandidate[] = [];
+        const wiki = await wikiPicture(name).catch(() => null);
+        if (wiki) list.push(wiki);
+        list.push(...(await commonsCandidates(name).catch(() => [])).slice(0, 3));
+        return list;
+      };
+      return { first: first!, extras, loadExtras };
+    }
+  }
+
   const wiki = await wikiPicture(name).catch(() => null);
-  if (wiki) candidates.push(wiki);
+  if (wiki) {
+    loadExtras = async () => (await commonsCandidates(name).catch(() => [])).slice(0, 3);
+    return { first: wiki, extras, loadExtras };
+  }
+
   const commons = await commonsCandidates(name).catch(() => []);
-  candidates.push(...commons.slice(0, 3));
-  return candidates.slice(0, 6);
+  return { first: commons[0] ?? null, extras: commons.slice(1, 4), loadExtras: null };
 }
 
 /** Показать принятую картинку во всех комнатах, где есть этот предмет. */
@@ -765,15 +788,31 @@ function refreshAuto(name: string, hash: string | null) {
  * Оптимистично показываем первого кандидата и проверяем его в фоне:
  * если модель говорит «не то» — ставим следующего, а последнего убираем.
  */
-async function verifyAndSwap(key: string, name: string, packName: string, currentHash: string, rest: ImageCandidate[]) {
+async function verifyAndSwap(
+  key: string,
+  name: string,
+  packName: string,
+  currentHash: string,
+  rest: ImageCandidate[],
+  loadExtras: (() => Promise<ImageCandidate[]>) | null = null,
+) {
   const verdict = await verifyPicture(currentHash, name, packName);
   if (verdict.ok) {
     store.saveAutoImage(key, currentHash, verdict.checker);
     return;
   }
   let checks = 1;
-  for (const candidate of rest) {
+  let queue = [...rest];
+  let loaded = loadExtras === null;
+  for (;;) {
+    if (queue.length === 0) {
+      if (loaded) break;
+      loaded = true;
+      queue = await loadExtras!().catch(() => []);
+      if (queue.length === 0) break;
+    }
     if (checks >= 4) break;
+    const candidate = queue.shift()!;
     checks += 1;
     try {
       const image = await autoSlot(() => ingestImage(candidate.url, "item", candidate));
@@ -804,8 +843,7 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
 
   const job = autoSlot(async () => {
     try {
-      const candidates = await pictureCandidates(name, anime);
-      const first = candidates.shift();
+      const { first, extras, loadExtras } = await primaryPicture(name, anime, high);
       if (!first) {
         store.saveAutoMiss(key);
         return null;
@@ -813,7 +851,7 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
       const image = await ingestImage(first.url, "item", first);
       const checker = IMAGE_CHECK ? "pending" : "heuristic";
       store.saveAutoImage(key, image.hash, checker);
-      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, candidates);
+      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras);
       return image.hash;
     } catch {
       store.saveAutoMiss(key);
