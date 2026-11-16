@@ -766,8 +766,9 @@ Bun.serve({
           }
           set.add(conn);
 
-          if (seat !== null && room.seats[seat]) {
+          if (seat !== null && room.seats[seat] && room.seats[seat].connected === false) {
             room.seats[seat].connected = true;
+            store.saveRoom(room);
             broadcast(room, "lobby");
           }
 
