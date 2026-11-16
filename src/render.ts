@@ -114,7 +114,7 @@ function head(title: string, lang: Lang, extra = "") {
 <meta name="theme-color" content="#f4efe4">
 <meta name="description" content="The Lot — a draft house for two: five picks, twenty coins, one winner.">
 <title>${esc(title)}</title>
-<link rel="icon" href="/public/favicon.svg" type="image/svg+xml">
+<link rel="icon" href="/public/favicon.svg?v=${esc(assetVersion)}" type="image/svg+xml">
 <link rel="manifest" href="/manifest.webmanifest">
 <meta property="og:title" content="The Lot">
 <meta property="og:description" content="A two-player draft house: five picks, twenty coins, one winner.">
@@ -142,7 +142,7 @@ function rulesDialog(t: (key: string) => string) {
 }
 
 function scripts() {
-  return `<script type="module" src="/public/vendor/datastar-1.0.5.js"></script>
+  return `<script type="module" src="/public/vendor/datastar-1.0.5.js?v=${esc(assetVersion)}"></script>
 <script type="module" src="/public/experience.js?v=${esc(assetVersion)}"></script>
 <script type="module" src="/public/sound.js?v=${esc(assetVersion)}"></script>`;
 }
@@ -432,7 +432,7 @@ function plate(name: string, emoji: string, poster: string | null) {
 
 function thumb(pick: any) {
   if (pick.poster) {
-    return `<img class="thumb" src="/img/tmdb/${esc(pick.poster)}" alt="" width="26" height="26" loading="lazy" decoding="async">`;
+    return `<img class="thumb" src="/img/tmdb/w92/${esc(pick.poster)}" alt="" width="26" height="26" loading="lazy" decoding="async">`;
   }
   return `<span class="thumb thumb--glyph" aria-hidden="true">${esc(pick.emoji)}</span>`;
 }
@@ -521,13 +521,13 @@ function lobbySide(view: View) {
 function inviteCard(view: View) {
   const t = makeT((view.lang ?? "ru") as Lang);
   if (view.mode === "local") {
-    return `<div class="invite-card invite-card--local">
+    return `<div class="invite-card invite-card--local" id="invite-card">
       <span class="invite-mark">${esc(t("lobby.onDevice"))}</span>
       <span class="invite-note">${esc(t("lobby.onDeviceNote"))}</span>
     </div>`;
   }
   const full = view.seatsFilled >= 2;
-  return `<div class="invite-card">
+  return `<div class="invite-card" id="invite-card">
     <span class="invite-mark">${esc(t("lobby.invite"))}</span>
     <code class="invite-code">${esc(view.code)}</code>
     <button class="text-button" type="button" data-copy="${esc(view.invite)}">${esc(t("lobby.copy"))}</button>
@@ -603,7 +603,7 @@ function renderLobby(view: View) {
   </search>
   <div class="category-list-wrap">
     ${inviteCard(view)}
-    ${customPackCard(view)}
+    <div class="custom-packs" id="custom-packs">${customPackCard(view)}</div>
     <p class="list-eyebrow" id="category-list-label" data-one="${esc(t("unit.pack.one"))}" data-few="${esc(t("unit.pack.few"))}" data-many="${esc(t("unit.pack.many"))}">${view.packs.length} ${esc(units(t, (view.lang ?? "ru") as Lang, "pack", view.packs.length))} · ${esc(t("tab.all"))}</p>
     <div class="category-list" id="pack-grid">${view.packs.map((pack: any) => packCard(view, pack)).join("")}</div>
     <p class="empty-categories" id="pack-empty" hidden>${esc(t("lobby.noMatches"))}</p>
@@ -1028,7 +1028,13 @@ function renderResults(view: View) {
 /* ── мелкие фрагменты для точечных патчей ── */
 
 export function patchFragments(view: View) {
-  return { bar: renderBar(view), side: view.phase === "lobby" ? lobbySide(view) : "" };
+  const lobby = view.phase === "lobby";
+  return {
+    bar: renderBar(view),
+    side: lobby ? lobbySide(view) : "",
+    invite: lobby ? inviteCard(view) : "",
+    custom: lobby ? `<div class="custom-packs" id="custom-packs">${customPackCard(view)}</div>` : "",
+  };
 }
 
 export function toast(text: string) {

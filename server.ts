@@ -11,7 +11,16 @@ const PORT = Number(process.env.PORT ?? 4173);
 
 // Версия статики из mtime+size: после деплоя ссылки на CSS/JS меняются,
 // поэтому старый кеш браузера не может смешаться с новой разметкой.
-const ASSET_FILES = ["public/style.css", "public/redesign.css", "public/stages.css", "public/experience.js", "public/sound.js", "public/sw.js"];
+const ASSET_FILES = [
+  "public/style.css",
+  "public/redesign.css",
+  "public/stages.css",
+  "public/experience.js",
+  "public/sound.js",
+  "public/sw.js",
+  "public/favicon.svg",
+  "public/vendor/datastar-1.0.5.js",
+];
 let ASSET_VERSION = "1";
 {
   let seed = 0;
@@ -202,9 +211,13 @@ function broadcast(room: any, scope: "full" | "lobby" | "toast" = "full", messag
     if (scope === "full") {
       send(conn, frame("#room", renderRoom(view)));
     } else if (scope === "lobby") {
+      // Каталог на 250 КБ не гоняем по SSE: в лобби меняются только шапка,
+      // пульт, карточка приглашения и свои паки.
       const parts = patchFragments(view);
       send(conn, frame("#room-bar", parts.bar));
       if (parts.side) send(conn, frame("#lobby-side", parts.side));
+      if (parts.invite) send(conn, frame("#invite-card", parts.invite));
+      if (parts.custom) send(conn, frame("#custom-packs", parts.custom));
     }
     if (message) send(conn, frame("#toast", toast(message)));
   }
@@ -510,7 +523,8 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       session.seat = seat;
       store.rememberSession(sid, code, seat);
       store.saveRoom(room);
-      broadcast(room, "full");
+      // Приход второго игрока меняет только шапку и пульт: каталог не пересылаем.
+      broadcast(room, "lobby");
     } else if (seat === "full" || seat === "closed") {
       session.room = code;
       session.seat = null;
@@ -678,11 +692,17 @@ function roomOr404(code: string) {
 
 const IMAGE_CACHE = new Map<string, { body: Uint8Array; type: string }>();
 const IMAGE_LIMIT = 240;
+/** Байты статики в памяти процесса: отдаём без чтения с диска. */
+const STATIC_CACHE = new Map<string, { mtime: number; size: number; body: Uint8Array }>();
 
-async function tmdbImage(file: string) {
-  const cached = IMAGE_CACHE.get(file);
+/** Допустимые превью TMDb: миниатюра в отчёте — w92, плашка лота — w342. */
+const POSTER_SIZES = new Set(["w92", "w154", "w342"]);
+
+async function tmdbImage(file: string, size: string) {
+  const key = `${size}/${file}`;
+  const cached = IMAGE_CACHE.get(key);
   if (cached) return cached;
-  const upstream = await fetch(`https://image.tmdb.org/t/p/w342/${file}`, { signal: AbortSignal.timeout(12_000) });
+  const upstream = await fetch(`https://image.tmdb.org/t/p/${size}/${file}`, { signal: AbortSignal.timeout(12_000) });
   if (!upstream.ok) return null;
   const type = upstream.headers.get("content-type") ?? "image/jpeg";
   if (!type.startsWith("image/")) return null;
@@ -690,7 +710,7 @@ async function tmdbImage(file: string) {
   if (body.byteLength > 2_000_000) return null;
   if (IMAGE_CACHE.size > IMAGE_LIMIT) IMAGE_CACHE.delete(IMAGE_CACHE.keys().next().value as string);
   const entry = { body, type };
-  IMAGE_CACHE.set(file, entry);
+  IMAGE_CACHE.set(key, entry);
   return entry;
 }
 
@@ -731,19 +751,36 @@ const MIME: Record<string, string> = {
   ".md": "text/markdown; charset=utf-8",
 };
 
-async function serveStatic(pathname: string) {
+/**
+ * Статика неизменяема: ссылки в HTML всегда с ?v=<версия сборки>.
+ * Такие ответы кешируются браузером и Cloudflare на год, без Set-Cookie и перепроверок.
+ */
+async function serveStatic(pathname: string, version: string | null) {
   const relative = normalize(pathname.replace(/^\/public\/?/, "")).replace(/^(\.\.[/\\])+/, "");
   if (!relative || relative.startsWith("..")) return new Response("Not found", { status: 404 });
-  const file = Bun.file(resolve("public", relative));
+  const absolute = resolve("public", relative);
+  const file = Bun.file(absolute);
   if (!(await file.exists())) return new Response("Not found", { status: 404 });
   const ext = relative.slice(relative.lastIndexOf("."));
-  return new Response(file, {
-    headers: {
-      ...SECURITY_HEADERS,
-      "Content-Type": MIME[ext] ?? "application/octet-stream",
-      "Cache-Control": ext === ".js" || ext === ".css" ? "no-cache" : "public, max-age=3600",
-    },
-  });
+
+  // Файлы вендора версионированы именем, остальные — параметром ?v=.
+  const immutable = version === ASSET_VERSION || relative.startsWith("vendor/");
+  const headers = {
+    ...SECURITY_HEADERS,
+    "Content-Type": MIME[ext] ?? "application/octet-stream",
+    "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=300",
+  };
+
+  // Байты держим в памяти: у продакшена статика не меняется без перезапуска,
+  // а mtime-проверка не даёт отдавать старое при разработке.
+  const mtime = file.lastModified ?? 0;
+  const cached = STATIC_CACHE.get(absolute);
+  if (cached && cached.mtime === mtime && cached.size === file.size) {
+    return new Response(cached.body.slice().buffer, { headers });
+  }
+  const body = new Uint8Array(await file.arrayBuffer());
+  STATIC_CACHE.set(absolute, { mtime, size: body.byteLength, body });
+  return new Response(body.slice().buffer, { headers });
 }
 
 /* ─────────────────────── сервер ─────────────────────── */
@@ -852,9 +889,13 @@ const server = Bun.serve({
     }
 
     if (path.startsWith("/img/tmdb/")) {
-      const file = path.slice("/img/tmdb/".length);
+      const rest = path.slice("/img/tmdb/".length);
+      const [head, ...tail] = rest.split("/");
+      const sized = POSTER_SIZES.has(head ?? "");
+      const size = sized ? (head as string) : "w342";
+      const file = sized ? tail.join("/") : rest;
       if (!/^[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp)$/.test(file)) return new Response("Not found", { status: 404 });
-      const image = await tmdbImage(file).catch(() => null);
+      const image = await tmdbImage(file, size).catch(() => null);
       if (!image) return new Response("Not found", { status: 404 });
       return new Response(image.body.slice().buffer, {
         headers: {
@@ -866,7 +907,7 @@ const server = Bun.serve({
     }
 
     if (path.startsWith("/public/")) {
-      return withSid(await serveStatic(path));
+      return serveStatic(path, url.searchParams.get("v"));
     }
 
     if (path.startsWith("/act/")) {

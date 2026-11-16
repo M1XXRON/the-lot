@@ -268,6 +268,28 @@ async function discoverability(server) {
   return { code: "sitemap" };
 }
 
+/** Версионированная статика кешируется на год и не трогает cookie. */
+async function staticCache(server) {
+  const landing = await (await fetch(`${server.base}/`)).text();
+  const version = landing.match(/style\.css\?v=([a-z0-9]+)/)?.[1];
+  assert(version, "в HTML нет версии статики");
+
+  const versioned = await fetch(`${server.base}/public/style.css?v=${version}`);
+  assert(versioned.status === 200, `версионированный CSS вернул ${versioned.status}`);
+  assert((versioned.headers.get("cache-control") ?? "").includes("immutable"), "версионированный CSS не immutable");
+  assert(versioned.headers.get("set-cookie") === null, "статика ставит cookie — край Cloudflare её не закеширует");
+
+  const plain = await fetch(`${server.base}/public/style.css`);
+  assert(!(plain.headers.get("cache-control") ?? "").includes("immutable"), "CSS без версии отдан как immutable");
+
+  const vendor = await fetch(`${server.base}/public/vendor/datastar-1.0.5.js`);
+  assert((vendor.headers.get("cache-control") ?? "").includes("immutable"), "вендор отдан без immutable");
+
+  const second = await fetch(`${server.base}/public/style.css?v=${version}`);
+  assert((second.headers.get("content-type") ?? "").includes("text/css"), "CSS потерял тип при кешировании в памяти");
+  return { code: "cache" };
+}
+
 /** Флуд действиями упирается в 429. */
 async function rateLimit(server) {
   const host = client(server.base);
@@ -326,6 +348,7 @@ const checks = [
   ["saved packs", () => savedPacks(server)],
   ["ops health", () => opsHealth(server)],
   ["sitemap & sw", () => discoverability(server)],
+  ["static cache", () => staticCache(server)],
   ["rate limit", () => rateLimit(server)],
   ["player history", () => history(server)],
 ];
