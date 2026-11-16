@@ -10,8 +10,8 @@ const run = async (name, command) => {
   if (code !== 0) throw new Error(`${name}: код ${code}`);
 };
 
-console.log("• типы (tsc --noEmit)");
-await run("types", ["bunx", "tsc", "--noEmit"]);
+console.log("• типы (bun check)");
+await run("types", ["bun", "check"]);
 
 console.log("• нормы оценивания (norms-check)");
 await run("norms", ["bun", "tools/norms-check.mjs"]);

@@ -9,3 +9,4 @@ data/*.db-wal
 opencode.env
 *.log
 .DS_Store
+screenshots/

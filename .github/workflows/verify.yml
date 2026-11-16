@@ -26,7 +26,7 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Typecheck
-        run: bunx tsc --noEmit
+        run: bun check
 
       - name: Scoring norms
         run: bun tools/norms-check.mjs

@@ -37,7 +37,7 @@ tools/             verify, http-e2e, ui-e2e, balance-sim, shot, lib
 test/sim-bun.mjs   боты по HTTP
 deploy/            smoke.sh, vps/ (bootstrap, deploy, lot.service, Caddyfile)
 data/              lot.db (в git не попадает)
-screenshots/       актуальные кадры десктопа и телефона
+screenshots/       локальные кадры (в git не попадают: bun run shots)
 ```
 
 ## Локально
@@ -60,7 +60,7 @@ TMDB_READ_ACCESS_TOKEN=...
 ## Проверки
 
 ```sh
-bun run check        # tsc --noEmit
+bun check            # встроенный тайпчек Bun
 bun run verify       # типы + экономика + HTTP-e2e + UI-e2e
 bun run sim          # 3000 партий ботов по экономике
 bun run test         # боты по HTTP, N партий
