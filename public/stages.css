@@ -95,4 +95,14 @@
     .invite-code { font-size: 0.96rem; }
     .screen--game .bar-actions .icon-button { inline-size: 2.75rem; min-inline-size: 44px; min-block-size: 44px; }
   }
+
+  /* Подпись к чужой картинке: тихая строка под описанием лота */
+  .plate-credit {
+    margin-block-start: 0.4rem;
+    color: var(--bone-muted);
+    font-family: var(--font-mono);
+    font-size: 0.58rem;
+    letter-spacing: 0.05em;
+    opacity: 0.72;
+  }
 }

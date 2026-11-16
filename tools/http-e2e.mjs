@@ -73,6 +73,29 @@ const imageSource = Bun.serve({
     if (url.pathname === "/redirect") return new Response(null, { status: 302, headers: { location: "/cover2.png" } });
     if (url.pathname === "/text") return new Response("not an image at all", { headers: { "content-type": "image/png" } });
     if (url.pathname === "/big") return new Response(new Uint8Array(7 * 1024 * 1024), { headers: { "content-type": "image/png" } });
+    if (url.pathname === "/commons") {
+      const body = {
+        query: {
+          pages: [
+            {
+              title: "File:Test pizza.jpg",
+              imageinfo: [
+                {
+                  thumburl: `${IMAGE_BASE}/cover.png`,
+                  descriptionurl: "https://example.org/wiki/File:Test_pizza.jpg",
+                  width: 1200,
+                  extmetadata: {
+                    Artist: { value: "<a href='#'>Jane Doe</a>" },
+                    LicenseShortName: { value: "CC BY-SA 4.0" },
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      };
+      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+    }
     return new Response("nope", { status: 404 });
   },
 });
@@ -394,6 +417,70 @@ async function packCover(server) {
   return { code };
 }
 
+/** Подбор обложки: кандидаты из поиска, превью уже у нас, подпись автора. */
+async function coverSearch(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  await host.actJson("pack", { pack: "free-candy" });
+
+  const found = await host.actJson("cover-find", { pack: "free-candy" });
+  assert(found.status === 200, `поиск картинок вернул ${found.status}`);
+  const data = await found.json();
+  assert(Array.isArray(data.candidates) && data.candidates.length === 1, `кандидатов: ${data.candidates?.length}`);
+  const [candidate] = data.candidates;
+  assert(candidate.thumb.startsWith("/img/x/"), "превью кандидата не локальное");
+  assert(candidate.author === "Jane Doe", `автор не очистился от разметки: ${candidate.author}`);
+  assert(candidate.license === "CC BY-SA 4.0", "лицензия не разобралась");
+  const preview = await fetch(`${server.base}${candidate.thumb}`);
+  assert(preview.status === 200, "превью кандидата не отдалось");
+
+  const applied = await host.form("/act/cover", {
+    pack: "free-candy",
+    url: candidate.url,
+    author: candidate.author,
+    license: candidate.license,
+    page: candidate.page,
+  });
+  assert(applied.status === 303, `применение кандидата вернуло ${applied.status}`);
+  const lobby = await host.html(`/r/${code}`);
+  assert(lobby.html.includes("Фото: Jane Doe · CC BY-SA 4.0"), "подпись к обложке не попала в диалог");
+  return { code };
+}
+
+/** Картинки предметов из своего пака: постер лота и миниатюра. */
+async function itemPictures(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  const names = ["Moon", "Mars", "Venus", "Jupiter", "Saturn", "Neptune"];
+  const payload = {
+    name: "Pictures",
+    emoji: "🖼",
+    items: names.map((name) => ({ name, image: `${IMAGE_BASE}/cover.png` })),
+  };
+  const uploaded = await host.upload("/act/custom", { body: JSON.stringify(payload) });
+  assert(uploaded.status === 303, `загрузка пака с картинками вернула ${uploaded.status}`);
+
+  await host.act("toss");
+  await host.act("begin");
+  let plate = "";
+  for (let i = 0; i < 50; i += 1) {
+    const page = await host.html(`/r/${code}`);
+    plate = page.html.match(/lot-plate--photo"><img src="(\/img\/x\/[a-f0-9]{24}-342\.webp)"/)?.[1] ?? "";
+    if (plate) break;
+    await Bun.sleep(100);
+  }
+  assert(plate, "постер предмета не появился на плашке лота");
+  const image = await fetch(`${server.base}${plate}`);
+  assert(image.status === 200, `постер вернул ${image.status}`);
+  assert((image.headers.get("content-type") ?? "") === "image/webp", "постер не webp");
+  const thumb = plate.replace("-342.webp", "-92.webp");
+  const small = await fetch(`${server.base}${thumb}`);
+  assert(small.status === 200, "миниатюра постера не отдалась");
+  return { code };
+}
+
 /** Каталог едет отдельным кешируемым ответом, а комната остаётся лёгкой. */
 async function catalog(server) {
   const landing = await (await fetch(`${server.base}/`)).text();
@@ -482,10 +569,19 @@ async function playLocalWith(host, packId) {
   return code;
 }
 
-const server = await startServer({ env: { LOT_OPS_TOKEN: OPS_TOKEN, LOT_IMAGE_ALLOW_LOCAL: "1", LOT_IMAGES: "/tmp/lot-e2e-images" } });
+const server = await startServer({
+  env: {
+    LOT_OPS_TOKEN: OPS_TOKEN,
+    LOT_IMAGE_ALLOW_LOCAL: "1",
+    LOT_IMAGES: "/tmp/lot-e2e-images",
+    LOT_COMMONS_API: `${IMAGE_BASE}/commons`,
+  },
+});
 let failures = 0;
 const checks = [
   ["pack cover", () => packCover(server)],
+  ["cover search", () => coverSearch(server)],
+  ["item pictures", () => itemPictures(server)],
   ["local game", () => playLocal(server)],
   ["online game", () => playOnline(server)],
   ["human judge", () => humanJudge(server)],

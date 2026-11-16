@@ -153,6 +153,66 @@ function applyCovers() {
   }
 }
 
+/* ── подбор обложки: свои превью уже скачаны сервером, CSP чужие не пустит ── */
+async function findCoverOptions(dialog, trigger) {
+  const button = dialog.querySelector("#cover-find");
+  const box = dialog.querySelector("#cover-options");
+  if (!button || !box) return;
+  const pack = trigger?.dataset.pack || dialog.querySelector('input[name="pack"]')?.value || "";
+  const label = button.textContent;
+  button.disabled = true;
+  button.textContent = button.dataset.busy || label;
+  try {
+    const response = await fetch("/act/cover-find", {
+      method: "POST",
+      headers: { "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({ pack }),
+    });
+    const data = await response.json().catch(() => ({ candidates: [] }));
+    const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+    box.textContent = "";
+    box.hidden = false;
+    if (candidates.length === 0) {
+      const note = document.createElement("p");
+      note.className = "cover-nothing";
+      note.textContent = button.dataset.empty || "";
+      box.append(note);
+    }
+    for (const candidate of candidates) {
+      const option = document.createElement("button");
+      option.type = "button";
+      option.className = "cover-option";
+      option.title = [candidate.title, candidate.author, candidate.license].filter(Boolean).join(" · ");
+      const img = document.createElement("img");
+      img.src = candidate.thumb;
+      img.alt = "";
+      img.width = 96;
+      img.height = 96;
+      img.loading = "lazy";
+      img.decoding = "async";
+      option.append(img);
+      option.addEventListener("click", () => {
+        for (const node of box.querySelectorAll(".cover-option")) node.classList.toggle("is-selected", node === option);
+        dialog.querySelector('input[name="url"]').value = candidate.url;
+        dialog.querySelector('input[name="author"]').value = candidate.author || "";
+        dialog.querySelector('input[name="license"]').value = candidate.license || "";
+        dialog.querySelector('input[name="page"]').value = candidate.page || "";
+        const line = dialog.querySelector("#cover-credit");
+        if (line) {
+          const credit = [candidate.author, candidate.license].filter(Boolean).join(" · ");
+          line.textContent = credit ? `${line.dataset.prefix || ""} ${credit}`.trim() : "";
+        }
+      });
+      box.append(option);
+    }
+  } catch {
+    /* без сети остаётся поле для ручной ссылки */
+  } finally {
+    button.disabled = false;
+    button.textContent = label;
+  }
+}
+
 /* ── диалог обложки: подставляем пак, который сейчас выбран ── */
 function prepareCover(dialog, trigger) {
   const pack = trigger.dataset.pack || "";
@@ -167,6 +227,17 @@ function prepareCover(dialog, trigger) {
   }
   const clear = dialog.querySelector("#cover-clear-form");
   if (clear) clear.hidden = !cover;
+  const credit = dialog.querySelector("#cover-credit");
+  if (credit) credit.textContent = trigger.dataset.credit || "";
+  for (const name of ["author", "license", "page"]) {
+    const input = dialog.querySelector(`input[name="${name}"]`);
+    if (input) input.value = "";
+  }
+  const options = dialog.querySelector("#cover-options");
+  if (options) {
+    options.hidden = true;
+    options.textContent = "";
+  }
   const target = dialog.querySelector("#cover-target");
   if (target) target.textContent = trigger.dataset.label || "";
   const url = dialog.querySelector('input[name="url"]');
@@ -264,6 +335,12 @@ function bind() {
     const toggle = event.target.closest("[data-sound-toggle]");
     if (toggle) {
       sound()?.toggle();
+      return;
+    }
+
+    const find = event.target.closest("#cover-find");
+    if (find) {
+      void findCoverOptions(find.closest("dialog"), null);
       return;
     }
 

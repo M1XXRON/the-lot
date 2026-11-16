@@ -464,6 +464,7 @@ export function totals(room) {
 /** @param {any} room @param {string|null} sessionId @param {string} origin */
 export function view(room, sessionId, origin) {
   const pack = room.customPack ?? packOrFallback(room.packId);
+  const pictures = room.items?.[pack.id] ?? {};
   const seat = sessionId ? seatOf(room, sessionId) : -1;
   const au = room.auction;
   const lot = room.lots[room.lotIndex] ?? null;
@@ -514,6 +515,7 @@ export function view(room, sessionId, origin) {
           name: pick.name,
           emoji: pick.emoji,
           poster: pick.poster ?? null,
+          image: pictures[pick.name] ?? null,
           price: pick.price,
           auto: pick.auto,
           rating: pick.aiRating ?? null,
@@ -536,7 +538,15 @@ export function view(room, sessionId, origin) {
       currentBid: au.currentBid,
       step: au.step || 1,
       bidAmount: au.highBidder === null ? au.opening : au.currentBid + (au.step || 1),
-      lot: lot ? { name: lot.name, emoji: lot.emoji, description: lot.description, poster: lot.poster ?? null } : null,
+      lot: lot
+        ? {
+            name: lot.name,
+            emoji: lot.emoji,
+            description: lot.description,
+            poster: lot.poster ?? null,
+            image: pictures[lot.name] ?? null,
+          }
+        : null,
       canBid:
         seat >= 0 &&
         controlsSeat(room, sessionId ?? "", au.turn) &&
@@ -548,6 +558,7 @@ export function view(room, sessionId, origin) {
     },
     history: room.history,
     covers: room.covers ?? {},
+    credits: room.credits ?? {},
     customLibId: room.customPackLibId ?? null,
     savedPacks: sessionId && isHost(room, sessionId) && Array.isArray(room.customLib) ? room.customLib : [],
     review: room.review,

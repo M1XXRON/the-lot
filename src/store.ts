@@ -68,12 +68,31 @@ db.exec(`
     updated_at INTEGER NOT NULL,
     PRIMARY KEY (owner, pack)
   );
+
+  CREATE TABLE IF NOT EXISTS item_images (
+    owner TEXT NOT NULL,
+    pack TEXT NOT NULL,
+    item TEXT NOT NULL,
+    hash TEXT NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (owner, pack, item)
+  );
 `);
 
 // Миграция для баз, созданных до появления истории игрока.
 try {
   const columns = db.query("PRAGMA table_info(games)").all() as { name: string }[];
   if (!columns.some((column) => column.name === "pids")) db.exec("ALTER TABLE games ADD COLUMN pids TEXT");
+} catch {
+  /* база только создана */
+}
+
+// Атрибуция картинок появилась позже: догоняем существующие базы.
+try {
+  const columns = db.query("PRAGMA table_info(images)").all() as { name: string }[];
+  for (const [name, type] of [["author", "TEXT"], ["license", "TEXT"], ["page", "TEXT"]]) {
+    if (!columns.some((column) => column.name === name)) db.exec(`ALTER TABLE images ADD COLUMN ${name} ${type} NOT NULL DEFAULT ''`);
+  }
 } catch {
   /* база только создана */
 }
@@ -246,29 +265,84 @@ export function forgetCustomPack(owner: string, id: string): boolean {
 
 /* ─────────────── картинки: обложки паков ─────────────── */
 
-export type StoredImage = { hash: string; source: string; mime: string; width: number; height: number };
+export type StoredImage = {
+  hash: string;
+  source: string;
+  mime: string;
+  width: number;
+  height: number;
+  author: string;
+  license: string;
+  page: string;
+};
 
 const insertImage = db.prepare(
-  "INSERT INTO images (hash, source, mime, width, height, created_at) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(hash) DO NOTHING",
+  "INSERT INTO images (hash, source, mime, width, height, author, license, page, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+    "ON CONFLICT(hash) DO UPDATE SET " +
+    "author = CASE WHEN images.author = '' THEN excluded.author ELSE images.author END, " +
+    "license = CASE WHEN images.license = '' THEN excluded.license ELSE images.license END, " +
+    "page = CASE WHEN images.page = '' THEN excluded.page ELSE images.page END",
 );
-const getImage = db.prepare("SELECT hash, source, mime, width, height FROM images WHERE hash = ?");
+const getImage = db.prepare("SELECT hash, source, mime, width, height, author, license, page FROM images WHERE hash = ?");
+const getImages = db.prepare("SELECT hash, source, mime, width, height, author, license, page FROM images WHERE hash IN (SELECT value FROM json_each(?))");
 const setCoverStmt = db.prepare(
   "INSERT INTO pack_covers (owner, pack, hash, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, pack) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
 );
 const dropCoverStmt = db.prepare("DELETE FROM pack_covers WHERE owner = ? AND pack = ?");
 const coversStmt = db.prepare("SELECT pack, hash FROM pack_covers WHERE owner = ?");
+const setItemStmt = db.prepare(
+  "INSERT INTO item_images (owner, pack, item, hash, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner, pack, item) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
+);
+const dropItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ?");
+const itemStmt = db.prepare("SELECT pack, item, hash FROM item_images WHERE owner = ?");
 const pruneImagesStmt = db.prepare(
-  "DELETE FROM images WHERE created_at < ? AND hash NOT IN (SELECT hash FROM pack_covers) RETURNING hash",
+  "DELETE FROM images WHERE created_at < ? AND hash NOT IN (SELECT hash FROM pack_covers) AND hash NOT IN (SELECT hash FROM item_images) RETURNING hash",
 );
 
 /** @param {StoredImage} image */
 export function saveImage(image: StoredImage) {
-  insertImage.run(image.hash, image.source, image.mime, image.width, image.height, Date.now());
+  insertImage.run(
+    image.hash,
+    image.source,
+    image.mime,
+    image.width,
+    image.height,
+    image.author ?? "",
+    image.license ?? "",
+    image.page ?? "",
+    Date.now(),
+  );
 }
 
 /** @param {string} hash */
 export function imageByHash(hash: string): StoredImage | null {
   return (getImage.get(hash) as StoredImage | null) ?? null;
+}
+
+/** @param {string[]} hashes */
+export function imagesByHashes(hashes: string[]): StoredImage[] {
+  if (hashes.length === 0) return [];
+  return getImages.all(JSON.stringify(hashes)) as StoredImage[];
+}
+
+/** @param {string} owner @param {string} pack @param {string} item @param {string} hash */
+export function setItemImage(owner: string, pack: string, item: string, hash: string) {
+  setItemStmt.run(owner, pack, item, hash, Date.now());
+}
+
+/** @param {string} owner @param {string} pack */
+export function clearItemImages(owner: string, pack: string) {
+  dropItemStmt.run(owner, pack);
+}
+
+/** @param {string} owner @returns {Record<string, Record<string, string>>} */
+export function itemImages(owner: string): Record<string, Record<string, string>> {
+  if (!owner) return {};
+  const out: Record<string, Record<string, string>> = {};
+  for (const row of itemStmt.all(owner) as { pack: string; item: string; hash: string }[]) {
+    (out[row.pack] ??= {})[row.item] = row.hash;
+  }
+  return out;
 }
 
 /** @param {string} owner @param {string} pack @param {string} hash */

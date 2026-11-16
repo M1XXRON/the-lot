@@ -11,6 +11,16 @@ export const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (
 
 const money = (value: number) => `$${value}`;
 
+/** Подпись к чужой картинке: «Фото: автор · лицензия» или пусто. */
+function creditLine(view: View, hash: string | null | undefined) {
+  if (!hash) return "";
+  const credit = (view.credits ?? {})[hash];
+  if (!credit || (!credit.author && !credit.license)) return "";
+  const t = makeT((view.lang ?? "ru") as Lang);
+  const parts = [credit.author, credit.license].filter(Boolean).join(" · ");
+  return `${t("cover.credit")} ${parts}`;
+}
+
 /** Datastar-обработчик клика: payload отправляется JSON-ом. */
 function on(command: string, payload?: Record<string, string | number | boolean>) {
   if (!payload) return `data-on:click="@post('/act/${command}', {retry: 'never'})"`;
@@ -419,7 +429,10 @@ export function renderBar(view: View) {
 
 /* ── предметы и плашки ── */
 
-function plate(name: string, emoji: string, poster: string | null) {
+function plate(name: string, emoji: string, poster: string | null, image: string | null = null) {
+  if (image) {
+    return `<figure class="lot-plate lot-plate--photo"><img src="/img/x/${esc(image)}-342.webp" alt="" width="176" height="264" decoding="async" fetchpriority="high"></figure>`;
+  }
   if (poster) {
     return `<figure class="lot-plate lot-plate--photo"><img src="/img/tmdb/${esc(poster)}" alt="" width="176" height="264" decoding="async" fetchpriority="high"></figure>`;
   }
@@ -431,6 +444,9 @@ function plate(name: string, emoji: string, poster: string | null) {
 }
 
 function thumb(pick: any) {
+  if (pick.image) {
+    return `<img class="thumb" src="/img/x/${esc(pick.image)}-92.webp" alt="" width="26" height="26" loading="lazy" decoding="async">`;
+  }
   if (pick.poster) {
     return `<img class="thumb" src="/img/tmdb/w92/${esc(pick.poster)}" alt="" width="26" height="26" loading="lazy" decoding="async">`;
   }
@@ -502,7 +518,7 @@ function lobbySide(view: View) {
       }</span>
       <span class="selected-name">${esc(view.pack.name)}</span>
       <span class="selected-count">${view.pack.count} ${esc(units(t, (view.lang ?? "ru") as Lang, "item", view.pack.count))}</span>
-      <button class="text-button cover-open" type="button" data-open="cover" data-pack="${esc(view.pack.id)}" data-cover="${esc(view.pack.cover ?? "")}" data-label="${esc(`${view.pack.emoji} ${view.pack.name}`)}">${esc(t("cover.open"))}</button>
+      <button class="text-button cover-open" type="button" data-open="cover" data-pack="${esc(view.pack.id)}" data-cover="${esc(view.pack.cover ?? "")}" data-credit="${esc(creditLine(view, view.pack.cover))}" data-label="${esc(`${view.pack.emoji} ${view.pack.name}`)}">${esc(t("cover.open"))}</button>
     </div>
     <div class="judge-switch" role="group" aria-label="${esc(t("common.rules"))}">
       <button type="button" class="judge-option${auto ? " is-selected" : ""}" aria-pressed="${auto}" ${on("judge", { mode: "auto" })}>
@@ -660,12 +676,21 @@ function coverDialog(view: View) {
     <h2 id="cover-title">${esc(t("cover.title"))}</h2>
     <p class="cover-target" id="cover-target"></p>
     <figure class="cover-preview" id="cover-preview" hidden><img alt="" width="96" height="96" decoding="async"></figure>
+    <p class="cover-credit" id="cover-credit" data-prefix="${esc(t("cover.credit"))}">${esc(creditLine(view, view.pack.cover))}</p>
     <p class="cover-hint">${esc(t("cover.hint"))}</p>
     <form class="cover-form" method="post" action="/act/cover" id="cover-form">
       <input type="hidden" name="pack" value="">
+      <input type="hidden" name="author" value="">
+      <input type="hidden" name="license" value="">
+      <input type="hidden" name="page" value="">
       <label class="field">${esc(t("cover.link"))}
         <input type="url" name="url" placeholder="https://…" autocomplete="off" spellcheck="false" inputmode="url" required>
       </label>
+      <div class="cover-find">
+        <button class="text-button" type="button" id="cover-find" data-busy="${esc(t("cover.finding"))}" data-empty="${esc(t("cover.nothing"))}">${esc(t("cover.find"))}</button>
+        <span class="cover-find-hint">${esc(t("cover.findHint"))}</span>
+      </div>
+      <div class="cover-options" id="cover-options" hidden></div>
       <button class="primary-button" type="submit" data-busy="${esc(t("cover.waiting"))}">${esc(t("cover.apply"))}</button>
     </form>
     <form method="post" action="/act/cover-clear" id="cover-clear-form" hidden>
@@ -771,11 +796,12 @@ function stageBand(view: View, judging: boolean) {
       <span class="band-count">${picks}/10</span>
     </p>
     <div class="band-main">
-      ${plate(lot.name, lot.emoji, lot.poster ?? null)}
+      ${plate(lot.name, lot.emoji, lot.poster ?? null, lot.image ?? null)}
       <div class="band-copy">
         <p class="band-overline">${esc(t("stage.lotUp"))}</p>
         <h1 id="auction-title" class="band-title">${esc(lot.name)}</h1>
         <p class="band-note">${esc(lot.description)}</p>
+        ${creditLine(view, lot.image) ? `<p class="plate-credit">${esc(creditLine(view, lot.image))}</p>` : ""}
       </div>
     </div>
   </div>`;

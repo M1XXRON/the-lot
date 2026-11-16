@@ -340,8 +340,21 @@ function sniffImageType(bytes: Uint8Array) {
   return null;
 }
 
+/**
+ * Два профиля: обложка пака (квадратная плитка) и постер предмета (плашка 2:3).
+ * Файлы разных профилей не конфликтуют: у них разные суффиксы.
+ */
+const IMAGE_PROFILES = {
+  cover: { small: 96, large: 192 },
+  item: { small: 92, large: 342 },
+} as const;
+
+type ImageProfile = keyof typeof IMAGE_PROFILES;
+
+type ImageCredit = { author?: string; license?: string; page?: string };
+
 /** Скачивает картинку по ссылке и раскладывает её в два webp-размера. */
-async function ingestImage(raw: string) {
+async function ingestImage(raw: string, profile: ImageProfile, credit: ImageCredit = {}) {
   let current: URL;
   try {
     current = new URL(raw);
@@ -403,14 +416,194 @@ async function ingestImage(raw: string) {
     if (!meta?.width || !meta?.height) throw new CoverError("Картинка не читается.", "The image cannot be decoded.");
 
     const hash = new Bun.CryptoHasher("sha256").update(bytes).digest("hex").slice(0, 24);
-    const small = await new Bun.Image(bytes).resize(96, 96, { fit: "inside" }).webp({ quality: 80 }).toBuffer();
-    const large = await new Bun.Image(bytes).resize(192, 192, { fit: "inside" }).webp({ quality: 82 }).toBuffer();
-    await Bun.write(join(IMAGE_DIR, `${hash}-96.webp`), small);
-    await Bun.write(join(IMAGE_DIR, `${hash}-192.webp`), large);
-    store.saveImage({ hash, source: current.toString(), mime: meta.format ?? "image", width: meta.width, height: meta.height });
+    const sizes = IMAGE_PROFILES[profile];
+    const small = await new Bun.Image(bytes).resize(sizes.small, sizes.small, { fit: "inside" }).webp({ quality: 80 }).toBuffer();
+    const large = await new Bun.Image(bytes).resize(sizes.large, sizes.large, { fit: "inside" }).webp({ quality: 82 }).toBuffer();
+    await Bun.write(join(IMAGE_DIR, `${hash}-${sizes.small}.webp`), small);
+    await Bun.write(join(IMAGE_DIR, `${hash}-${sizes.large}.webp`), large);
+    store.saveImage({
+      hash,
+      source: current.toString(),
+      mime: meta.format ?? "image",
+      width: meta.width,
+      height: meta.height,
+      author: cleanCredit(credit.author, 80),
+      license: cleanCredit(credit.license, 40),
+      page: cleanCredit(credit.page, 400),
+    });
     return { hash, source: current.toString() };
   }
   throw new CoverError("Слишком много перенаправлений.", "Too many redirects.");
+}
+
+/** Поиск картинок: Wikimedia Commons, при пустом ответе — Openverse. */
+const COMMONS_API = process.env.LOT_COMMONS_API ?? "https://commons.wikimedia.org/w/api.php";
+const OPENVERSE_API = process.env.LOT_OPENVERSE_API ?? "https://api.openverse.org/v1/images/";
+const IMAGE_UA = "TheLot/1.0 (+https://lot.bunker9.lol)";
+const SEARCH_TTL = 10 * 60 * 1000;
+const SEARCH_CACHE_LIMIT = 120;
+const searchCache = new Map<string, { expires: number; list: CoverCandidate[] }>();
+
+type CoverCandidate = { thumb: string; url: string; title: string; author: string; license: string; page: string };
+
+function plainText(value: unknown, max = 80) {
+  return String(value ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#0?39;/g, "'")
+    .replace(/&nbsp;/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+async function commonsCandidates(query: string): Promise<CoverCandidate[]> {
+  const url = new URL(COMMONS_API);
+  url.searchParams.set("action", "query");
+  url.searchParams.set("generator", "search");
+  url.searchParams.set("gsrsearch", `${query} filetype:bitmap`);
+  url.searchParams.set("gsrnamespace", "6");
+  url.searchParams.set("gsrlimit", "6");
+  url.searchParams.set("prop", "imageinfo");
+  url.searchParams.set("iiprop", "url|extmetadata|size");
+  url.searchParams.set("iiurlwidth", "342");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("formatversion", "2");
+  const response = await fetch(url, {
+    headers: { "user-agent": IMAGE_UA, accept: "application/json" },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!response.ok) return [];
+  const body: any = await response.json().catch(() => null);
+  const pages = Array.isArray(body?.query?.pages) ? body.query.pages : [];
+  const out: CoverCandidate[] = [];
+  for (const page of pages) {
+    const info = page?.imageinfo?.[0];
+    if (!info?.thumburl || !info?.descriptionurl) continue;
+    if (Number(info.width) > 0 && Number(info.width) < 300) continue;
+    const meta = info.extmetadata ?? {};
+    out.push({
+      thumb: String(info.thumburl),
+      url: String(info.thumburl),
+      title: plainText(page.title, 80).replace(/^File:/, ""),
+      author: plainText(meta.Artist?.value, 80),
+      license: plainText(meta.LicenseShortName?.value, 40),
+      page: String(info.descriptionurl),
+    });
+  }
+  return out;
+}
+
+async function openverseCandidates(query: string): Promise<CoverCandidate[]> {
+  const url = new URL(OPENVERSE_API);
+  url.searchParams.set("q", query);
+  url.searchParams.set("page_size", "6");
+  const response = await fetch(url, {
+    headers: { "user-agent": IMAGE_UA, accept: "application/json" },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!response.ok) return [];
+  const body: any = await response.json().catch(() => null);
+  const results = Array.isArray(body?.results) ? body.results : [];
+  const out: CoverCandidate[] = [];
+  for (const item of results) {
+    const thumb = item?.thumbnail ?? item?.url;
+    if (!thumb || !item?.url) continue;
+    out.push({
+      thumb: String(thumb),
+      url: String(item.url),
+      title: plainText(item.title, 80) || plainText(query, 80),
+      author: plainText(item.creator, 80),
+      license: plainText([item.license, item.license_version].filter(Boolean).join(" ").toUpperCase(), 40),
+      page: String(item.foreign_landing_url ?? item.url),
+    });
+  }
+  return out;
+}
+
+/** Кандидаты кешируются и сразу скачиваются в наше хранилище — превью с чужого домена CSP не пустит. */
+async function findCovers(query: string): Promise<CoverCandidate[]> {
+  const key = query.trim().toLowerCase().slice(0, 80);
+  if (!key) return [];
+  const hit = searchCache.get(key);
+  if (hit && hit.expires > Date.now()) return hit.list;
+
+  let list = await commonsCandidates(query).catch(() => [] as CoverCandidate[]);
+  if (list.length === 0) list = await openverseCandidates(query).catch(() => [] as CoverCandidate[]);
+
+  const ready: CoverCandidate[] = [];
+  await Promise.all(
+    list.map(async (candidate) => {
+      try {
+        const image = await ingestImage(candidate.thumb, "cover", candidate);
+        ready.push({ ...candidate, thumb: `/img/x/${image.hash}-192.webp` });
+      } catch {
+        /* кандидат не скачался — пропускаем */
+      }
+    }),
+  );
+  ready.sort((a, b) => list.findIndex((item) => item.url === a.url) - list.findIndex((item) => item.url === b.url));
+
+  // Пустой ответ не кешируем: сеть могла моргнуть, попробуем в следующий раз.
+  if (ready.length > 0) {
+    if (searchCache.size >= SEARCH_CACHE_LIMIT) searchCache.delete(searchCache.keys().next().value as string);
+    searchCache.set(key, { expires: Date.now() + SEARCH_TTL, list: ready });
+  }
+  return ready;
+}
+
+/** Атрибуция — обычный текст без разметки и управляющих символов. */
+function cleanCredit(value: unknown, max: number) {
+  return String(value ?? "")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/[\u0000-\u001f\u007f]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, max);
+}
+
+/**
+ * Картинки предметов качаем после ответа: пака из 60 предметов никто не должен ждать.
+ * Готовые падают в комнату патчами, так что постеры появляются по мере скачивания.
+ */
+async function ingestItemPictures(room: any, packId: string, entries: { item: string; url: string }[], owner: string) {
+  const queue = [...entries];
+  let ok = 0;
+  let last = 0;
+  const ping = () => {
+    if (Date.now() - last < 700) return;
+    last = Date.now();
+    persist(room);
+    broadcast(room, "full");
+  };
+  const worker = async () => {
+    for (;;) {
+      const next = queue.shift();
+      if (!next) return;
+      try {
+        const image = await ingestImage(next.url, "item");
+        store.setItemImage(owner, packId, next.item, image.hash);
+        room.items = store.itemImages(owner);
+        creditsFor(room);
+        ok += 1;
+        ping();
+      } catch {
+        /* битая ссылка — просто нет постера */
+      }
+    }
+  };
+  await Promise.all([worker(), worker(), worker(), worker()]);
+  persist(room);
+  broadcast(room, "full");
+  if (room.hostSession) {
+    say(
+      room,
+      room.hostSession,
+      `Картинки предметов: ${ok} из ${entries.length}.`,
+      `Item images: ${ok} of ${entries.length}.`,
+    );
+  }
 }
 
 /** Обложки принадлежат хозяину стола: у гостя они просто видны. */
@@ -418,6 +611,28 @@ function coversFor(room: any) {
   const owner = hostPidOf(room);
   room.covers = owner ? store.packCovers(owner) : {};
   return room.covers;
+}
+
+/** Постеры предметов из своих паков: pack → item → hash. */
+function itemsFor(room: any) {
+  const owner = hostPidOf(room);
+  room.items = owner ? store.itemImages(owner) : {};
+  return room.items;
+}
+
+/** Подписи к картинкам, которые сейчас видны в комнате. */
+function creditsFor(room: any) {
+  const hashes = new Set<string>(Object.values(room.covers ?? {}) as string[]);
+  for (const pack of Object.values(room.items ?? {}) as Record<string, string>[]) {
+    for (const hash of Object.values(pack)) hashes.add(hash);
+  }
+  const credits: Record<string, { author: string; license: string; page: string }> = {};
+  for (const image of store.imagesByHashes([...hashes])) {
+    if (!image.author && !image.license) continue;
+    credits[image.hash] = { author: image.author, license: image.license, page: image.page };
+  }
+  room.credits = credits;
+  return credits;
 }
 
 /* ── свои паки ── */
@@ -550,13 +765,30 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
     }
     const items = (Array.isArray(parsed) ? parsed : parsed?.items) ?? null;
     if (!Array.isArray(items)) return redirect("Нужен массив items или массив строк.");
-    const cleaned = [...new Set(
-      items
-        .filter((item: unknown): item is string => typeof item === "string")
-        .map((item: string) => item.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80))
-        .filter((item: string) => item.length > 0),
-    )];
+    // Предмет — строка или объект { name, image }: во втором случае картинку скачаем после загрузки.
+    const cleanItem = (value: string) =>
+      value.replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").trim().slice(0, 80);
+    const names: string[] = [];
+    const pictures = new Map<string, string>();
+    for (const entry of items) {
+      if (typeof entry === "string") {
+        const name = cleanItem(entry);
+        if (name) names.push(name);
+        continue;
+      }
+      if (!entry || typeof entry !== "object" || typeof entry.name !== "string") continue;
+      const name = cleanItem(entry.name);
+      if (!name) continue;
+      names.push(name);
+      if (typeof entry.image === "string" && /^https?:\/\//i.test(entry.image.trim())) {
+        pictures.set(name, entry.image.trim().slice(0, 2000));
+      }
+    }
+    const cleaned = [...new Set(names)];
     if (cleaned.length < 5 || cleaned.length > 60) return redirect("Нужно от 5 до 60 уникальных предметов.");
+    const itemPictures = cleaned
+      .filter((name) => pictures.has(name))
+      .map((name) => ({ item: name, url: pictures.get(name)! }));
     const name = typeof parsed?.name === "string" && parsed.name.trim()
       ? parsed.name.trim().replace(/[\u0000-\u001f]/g, "").slice(0, 40)
       : room.lang === "en" ? "Custom pack" : "Свой пак";
@@ -574,8 +806,12 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
     });
     room.customPackLibId = saved.id;
     libraryFor(room);
+    const owner = hostPidOf(room) || pid;
+    store.clearItemImages(owner, `custom-${room.code.toLowerCase()}`);
+    itemsFor(room);
     persist(room);
     broadcast(room, "full");
+    if (itemPictures.length) void ingestItemPictures(room, room.packId, itemPictures, owner);
     return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: back } });
   }
 
@@ -645,6 +881,7 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
     room.pids = [pid, mode === "local" ? pid : null];
     libraryFor(room);
     coversFor(room);
+    itemsFor(room);
     if (mode === "local") {
       engine.fillLocalSeat(room);
       const second = langOf(request) === "en" ? "PLAYER 2" : "ИГРОК 2";
@@ -719,10 +956,12 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       const url = typeof body.url === "string" ? body.url.trim().slice(0, 2000) : "";
       if (!/^https?:\/\//i.test(url)) return redirect(room.lang === "en" ? "Paste a link to an image." : "Вставьте ссылку на картинку.");
       try {
-        const image = await ingestImage(url);
+        const credit: ImageCredit = { author: body.author, license: body.license, page: body.page };
+        const image = await ingestImage(url, "cover", credit);
         const owner = hostPidOf(room) || pid;
         store.setPackCover(owner, packId, image.hash);
         room.covers = store.packCovers(owner);
+        creditsFor(room);
         persist(room);
         broadcast(room, "full");
         return redirect(room.lang === "en" ? "Cover updated." : "Обложка обновлена.");
@@ -732,6 +971,17 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
         return redirect(room.lang === "en" ? "Could not take that image." : "Не получилось взять картинку.");
       }
     }
+    case "cover-find": {
+      if (!host) return fail(request, "Искать картинку может хозяин стола.", 403);
+      if (room.phase !== "lobby") return fail(request, "Драфт уже начался.", 409);
+      if (!allow(`find:${pid}`, 1 / 2, 6)) return tooMany(4);
+      const packId = typeof body.pack === "string" && body.pack ? String(body.pack).slice(0, 60) : room.packId;
+      const pack = room.customPack?.id === packId ? room.customPack : content.packById.get(packId);
+      if (!pack) return json({ candidates: [] }, 404);
+      const query = cleanCredit(body.q, 80) || cleanCredit(pack.name, 80);
+      const candidates = await findCovers(query);
+      return json({ candidates });
+    }
     case "cover-clear": {
       if (!host) return fail(request, "Обложку меняет хозяин стола.", 403);
       if (room.phase !== "lobby") return fail(request, "Драфт уже начался.", 409);
@@ -739,6 +989,7 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       const owner = hostPidOf(room) || pid;
       store.clearPackCover(owner, packId);
       room.covers = store.packCovers(owner);
+      creditsFor(room);
       persist(room);
       broadcast(room, "full");
       session.notice = room.lang === "en" ? "Cover removed." : "Обложка убрана.";
@@ -1088,7 +1339,7 @@ const server = Bun.serve({
 
     if (path.startsWith("/img/x/")) {
       const file = path.slice("/img/x/".length);
-      if (!/^[a-f0-9]{24}-(96|192)\.webp$/.test(file)) return new Response("Not found", { status: 404 });
+      if (!/^[a-f0-9]{24}-(92|96|192|342)\.webp$/.test(file)) return new Response("Not found", { status: 404 });
       const image = Bun.file(join(IMAGE_DIR, file));
       if (!(await image.exists())) return new Response("Not found", { status: 404 });
       return new Response(image, {
@@ -1233,6 +1484,8 @@ const server = Bun.serve({
       store.rememberSession(sid, room.code, seat);
       libraryFor(room);
       coversFor(room);
+      itemsFor(room);
+      creditsFor(room);
       const pageView: any = engine.view(room, sid, origin);
       pageView.lang = langOf(request);
       const notice = session.notice ?? "";
