@@ -982,6 +982,61 @@ async function handleAction(request: Request, cmd: string, sid: string, pid: str
       const candidates = await findCovers(query);
       return json({ candidates });
     }
+    case "lot-find": {
+      if (!host) return fail(request, "Искать картинку может хозяин стола.", 403);
+      if (room.phase !== "auction") return fail(request, "Сейчас не торги.", 409);
+      if (!allow(`find:${pid}`, 1 / 2, 6)) return tooMany(4);
+      const lot = room.lots[room.lotIndex];
+      if (!lot) return json({ candidates: [] }, 409);
+      const query = cleanCredit(body.q, 80) || cleanCredit(lot.name, 80);
+      const candidates = await findCovers(query);
+      return json({ candidates });
+    }
+    case "lot-image": {
+      if (!host) return fail(request, "Картинку ставит хозяин стола.", 403);
+      if (room.phase !== "auction") return fail(request, "Сейчас не торги.", 409);
+      const back = `/r/${room.code}`;
+      const redirect = (message?: { ru: string; en: string } | string) => {
+        if (message) session.notice = typeof message === "string" ? message : room.lang === "en" ? message.en : message.ru;
+        return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: back } });
+      };
+      if (!allow(`cover:${pid}`, 1 / 3, 8)) {
+        return redirect(room.lang === "en" ? "Too often — give it a moment." : "Слишком часто — подождите немного.");
+      }
+      const lot = room.lots[room.lotIndex];
+      const item = typeof body.item === "string" ? body.item.slice(0, 80) : lot?.name;
+      if (!lot || item !== lot.name) return redirect(room.lang === "en" ? "That lot is gone." : "Этот лот уже ушёл.");
+      const url = typeof body.url === "string" ? body.url.trim().slice(0, 2000) : "";
+      if (!/^https?:\/\//i.test(url)) return redirect(room.lang === "en" ? "Paste a link to an image." : "Вставьте ссылку на картинку.");
+      try {
+        const image = await ingestImage(url, "item", { author: body.author, license: body.license, page: body.page });
+        const owner = hostPidOf(room) || pid;
+        store.setItemImage(owner, room.packId, item, image.hash);
+        room.items = store.itemImages(owner);
+        creditsFor(room);
+        persist(room);
+        broadcast(room, "full");
+        return redirect(room.lang === "en" ? "Lot image set." : "Картинка лота поставлена.");
+      } catch (error) {
+        if (error instanceof CoverError) return redirect({ ru: error.ru, en: error.en });
+        console.error("[lot-image]", error instanceof Error ? error.message : error);
+        return redirect(room.lang === "en" ? "Could not take that image." : "Не получилось взять картинку.");
+      }
+    }
+    case "lot-clear": {
+      if (!host) return fail(request, "Картинку меняет хозяин стола.", 403);
+      if (room.phase !== "auction") return fail(request, "Сейчас не торги.", 409);
+      const lot = room.lots[room.lotIndex];
+      const item = typeof body.item === "string" ? body.item.slice(0, 80) : lot?.name;
+      const owner = hostPidOf(room) || pid;
+      if (item) store.clearItemImage(owner, room.packId, item);
+      room.items = store.itemImages(owner);
+      creditsFor(room);
+      persist(room);
+      broadcast(room, "full");
+      session.notice = room.lang === "en" ? "Lot image removed." : "Картинка лота убрана.";
+      return new Response(null, { status: 303, headers: { ...SECURITY_HEADERS, Location: `/r/${room.code}` } });
+    }
     case "cover-clear": {
       if (!host) return fail(request, "Обложку меняет хозяин стола.", 403);
       if (room.phase !== "lobby") return fail(request, "Драфт уже начался.", 409);

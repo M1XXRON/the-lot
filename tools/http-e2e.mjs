@@ -448,6 +448,50 @@ async function coverSearch(server) {
   return { code };
 }
 
+/** Постер лота в любом паке: поиск по названию, плашка, подпись, снятие. */
+async function lotImage(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  await host.actJson("pack", { pack: "anime-characters" });
+  await host.act("toss");
+  await host.act("begin");
+
+  let page = await host.html(`/r/${code}`);
+  const lot = page.html.match(/id="auction-title"[^>]*>([^<]+)</)?.[1]?.trim();
+  assert(lot, "у торгов нет названия лота");
+  assert(/lot-plate--\d/.test(page.html), "у лота нет гравированной плашки по умолчанию");
+
+  const found = await host.actJson("lot-find", { q: lot });
+  assert(found.status === 200, `поиск постера вернул ${found.status}`);
+  const data = await found.json();
+  assert(data.candidates?.length === 1, `кандидатов постера: ${data.candidates?.length}`);
+  const candidate = data.candidates[0];
+
+  const applied = await host.form("/act/lot-image", {
+    item: lot,
+    url: candidate.url,
+    author: candidate.author,
+    license: candidate.license,
+    page: candidate.page,
+  });
+  assert(applied.status === 303, `постер лота вернул ${applied.status}`);
+
+  page = await host.html(`/r/${code}`);
+  assert(/lot-plate--photo"><img src="\/img\/x\/[a-f0-9]{24}-342\.webp"/.test(page.html), "постер не встал на плашку лота");
+  assert(page.html.includes("Фото: Jane Doe · CC BY-SA 4.0"), "нет подписи к постеру лота");
+  assert(page.html.includes('data-image="'), "кнопка картинки потеряла текущий постер");
+
+  const again = await host.html(`/r/${code}`);
+  assert(again.html.includes("Фото: Jane Doe"), "подпись пропала при повторной загрузке");
+
+  const cleared = await host.form("/act/lot-clear", { item: lot });
+  assert(cleared.status === 303, "сброс постера лота не сработал");
+  page = await host.html(`/r/${code}`);
+  assert(!/lot-plate--photo"/.test(page.html), "постер лота не снялся");
+  return { code };
+}
+
 /** Картинки предметов из своего пака: постер лота и миниатюра. */
 async function itemPictures(server) {
   const host = client(server.base);
@@ -582,6 +626,7 @@ const checks = [
   ["pack cover", () => packCover(server)],
   ["cover search", () => coverSearch(server)],
   ["item pictures", () => itemPictures(server)],
+  ["lot image", () => lotImage(server)],
   ["local game", () => playLocal(server)],
   ["online game", () => playOnline(server)],
   ["human judge", () => humanJudge(server)],

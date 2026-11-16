@@ -96,6 +96,11 @@ const ru: Dict = {
   "cover.finding": "ИЩУ…",
   "cover.findHint": "Подберём варианты из Wikimedia Commons и Openverse.",
   "cover.nothing": "Ничего не нашлось — вставьте ссылку вручную.",
+  "cover.lotTitle": "Картинка лота",
+  "cover.lotKicker": "ПОСТЕР ЛОТА",
+  "cover.lotHint": "Постер на плашку этого лота: ссылка или поиск. Запомнится за вами для этого пака.",
+  "cover.lotFindHint": "Ищем по названию лота — можно уточнить запрос.",
+  "cover.query": "ЧТО ИСКАТЬ",
 
   // монетка
   "toss.kicker": "ШАГ ВТОРОЙ · ЖЕРЕБЬЁВКА",
@@ -387,6 +392,11 @@ const en: Dict = {
   "cover.finding": "SEARCHING…",
   "cover.findHint": "We look through Wikimedia Commons and Openverse.",
   "cover.nothing": "Nothing found — paste a link by hand.",
+  "cover.lotTitle": "Lot image",
+  "cover.lotKicker": "LOT POSTER",
+  "cover.lotHint": "A poster for this lot's plate: a link or a search. It stays yours for this pack.",
+  "cover.lotFindHint": "We search by the lot name — tweak the query if needed.",
+  "cover.query": "SEARCH FOR",
 
   "toss.kicker": "ШАГ ВТОРОЙ · ЖЕРЕБЬЁВКА",
   "toss.tap": "TAP THE COIN",

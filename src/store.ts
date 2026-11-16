@@ -294,6 +294,7 @@ const setItemStmt = db.prepare(
   "INSERT INTO item_images (owner, pack, item, hash, updated_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT(owner, pack, item) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
 );
 const dropItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ?");
+const dropOneItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ? AND item = ?");
 const itemStmt = db.prepare("SELECT pack, item, hash FROM item_images WHERE owner = ?");
 const pruneImagesStmt = db.prepare(
   "DELETE FROM images WHERE created_at < ? AND hash NOT IN (SELECT hash FROM pack_covers) AND hash NOT IN (SELECT hash FROM item_images) RETURNING hash",
@@ -333,6 +334,11 @@ export function setItemImage(owner: string, pack: string, item: string, hash: st
 /** @param {string} owner @param {string} pack */
 export function clearItemImages(owner: string, pack: string) {
   dropItemStmt.run(owner, pack);
+}
+
+/** @param {string} owner @param {string} pack @param {string} item */
+export function clearItemImage(owner: string, pack: string, item: string) {
+  dropOneItemStmt.run(owner, pack, item);
 }
 
 /** @param {string} owner @returns {Record<string, Record<string, string>>} */

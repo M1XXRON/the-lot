@@ -429,17 +429,18 @@ export function renderBar(view: View) {
 
 /* ── предметы и плашки ── */
 
-function plate(name: string, emoji: string, poster: string | null, image: string | null = null) {
+function plate(name: string, emoji: string, poster: string | null, image: string | null = null, action = "") {
   if (image) {
-    return `<figure class="lot-plate lot-plate--photo"><img src="/img/x/${esc(image)}-342.webp" alt="" width="176" height="264" decoding="async" fetchpriority="high"></figure>`;
+    return `<figure class="lot-plate lot-plate--photo"><img src="/img/x/${esc(image)}-342.webp" alt="" width="176" height="264" decoding="async" fetchpriority="high">${action}</figure>`;
   }
   if (poster) {
-    return `<figure class="lot-plate lot-plate--photo"><img src="/img/tmdb/${esc(poster)}" alt="" width="176" height="264" decoding="async" fetchpriority="high"></figure>`;
+    return `<figure class="lot-plate lot-plate--photo"><img src="/img/tmdb/${esc(poster)}" alt="" width="176" height="264" decoding="async" fetchpriority="high">${action}</figure>`;
   }
   const variant = 1 + (hashOf(name) % 6);
   return `<figure class="lot-plate lot-plate--${variant}" aria-hidden="true">
     <span class="plate-emoji">${esc(emoji)}</span>
     <span class="plate-mark">${esc(initials(name).toUpperCase())}</span>
+    ${action}
   </figure>`;
 }
 
@@ -670,13 +671,13 @@ function renderLobby(view: View) {
 function coverDialog(view: View) {
   if (!view.host) return "";
   const t = makeT((view.lang ?? "ru") as Lang);
-  return `<dialog class="modal-card cover-dialog" id="cover" aria-labelledby="cover-title">
+  return `<dialog class="modal-card cover-dialog" id="cover" data-find="/act/cover-find" data-preview="192" aria-labelledby="cover-title">
     <form method="dialog"><button class="modal-close" aria-label="${esc(t("common.close"))}">×</button></form>
     <p class="eyebrow">${esc(t("cover.kicker"))}</p>
     <h2 id="cover-title">${esc(t("cover.title"))}</h2>
-    <p class="cover-target" id="cover-target"></p>
-    <figure class="cover-preview" id="cover-preview" hidden><img alt="" width="96" height="96" decoding="async"></figure>
-    <p class="cover-credit" id="cover-credit" data-prefix="${esc(t("cover.credit"))}">${esc(creditLine(view, view.pack.cover))}</p>
+    <p class="cover-target" data-target></p>
+    <figure class="cover-preview" data-preview hidden><img alt="" width="96" height="96" decoding="async"></figure>
+    <p class="cover-credit" data-credit data-prefix="${esc(t("cover.credit"))}">${esc(creditLine(view, view.pack.cover))}</p>
     <p class="cover-hint">${esc(t("cover.hint"))}</p>
     <form class="cover-form" method="post" action="/act/cover" id="cover-form">
       <input type="hidden" name="pack" value="">
@@ -687,14 +688,52 @@ function coverDialog(view: View) {
         <input type="url" name="url" placeholder="https://…" autocomplete="off" spellcheck="false" inputmode="url" required>
       </label>
       <div class="cover-find">
-        <button class="text-button" type="button" id="cover-find" data-busy="${esc(t("cover.finding"))}" data-empty="${esc(t("cover.nothing"))}">${esc(t("cover.find"))}</button>
+        <button class="text-button cover-find-button" type="button" data-busy="${esc(t("cover.finding"))}" data-empty="${esc(t("cover.nothing"))}">${esc(t("cover.find"))}</button>
         <span class="cover-find-hint">${esc(t("cover.findHint"))}</span>
       </div>
-      <div class="cover-options" id="cover-options" hidden></div>
+      <div class="cover-options" data-options hidden></div>
       <button class="primary-button" type="submit" data-busy="${esc(t("cover.waiting"))}">${esc(t("cover.apply"))}</button>
     </form>
     <form method="post" action="/act/cover-clear" id="cover-clear-form" hidden>
       <input type="hidden" name="pack" value="">
+      <button class="text-button" type="submit">${esc(t("cover.reset"))}</button>
+    </form>
+  </dialog>`;
+}
+
+/** Картинка лота: тот же поиск, что и у обложки, но постером на плашку. */
+function lotImageDialog(view: View) {
+  const t = makeT((view.lang ?? "ru") as Lang);
+  const lot = view.auction?.lot;
+  if (!lot) return "";
+  return `<dialog class="modal-card cover-dialog" id="lot-image" data-find="/act/lot-find" data-preview="342" aria-labelledby="lot-image-title">
+    <form method="dialog"><button class="modal-close" aria-label="${esc(t("common.close"))}">×</button></form>
+    <p class="eyebrow">${esc(t("cover.lotKicker"))}</p>
+    <h2 id="lot-image-title">${esc(t("cover.lotTitle"))}</h2>
+    <p class="cover-target" data-target></p>
+    <figure class="cover-preview" data-preview hidden><img alt="" width="96" height="96" decoding="async"></figure>
+    <p class="cover-credit" data-credit data-prefix="${esc(t("cover.credit"))}"></p>
+    <p class="cover-hint">${esc(t("cover.lotHint"))}</p>
+    <form class="cover-form" method="post" action="/act/lot-image" data-image-form>
+      <input type="hidden" name="item" value="">
+      <input type="hidden" name="author" value="">
+      <input type="hidden" name="license" value="">
+      <input type="hidden" name="page" value="">
+      <label class="field">${esc(t("cover.query"))}
+        <input type="text" name="q" autocomplete="off" spellcheck="false" maxlength="80">
+      </label>
+      <div class="cover-find">
+        <button class="text-button cover-find-button" type="button" data-busy="${esc(t("cover.finding"))}" data-empty="${esc(t("cover.nothing"))}">${esc(t("cover.find"))}</button>
+        <span class="cover-find-hint">${esc(t("cover.lotFindHint"))}</span>
+      </div>
+      <div class="cover-options" data-options hidden></div>
+      <label class="field">${esc(t("cover.link"))}
+        <input type="url" name="url" placeholder="https://…" autocomplete="off" spellcheck="false" inputmode="url" required>
+      </label>
+      <button class="primary-button" type="submit" data-busy="${esc(t("cover.waiting"))}">${esc(t("cover.apply"))}</button>
+    </form>
+    <form method="post" action="/act/lot-clear" data-image-clear>
+      <input type="hidden" name="item" value="">
       <button class="text-button" type="submit">${esc(t("cover.reset"))}</button>
     </form>
   </dialog>`;
@@ -796,7 +835,15 @@ function stageBand(view: View, judging: boolean) {
       <span class="band-count">${picks}/10</span>
     </p>
     <div class="band-main">
-      ${plate(lot.name, lot.emoji, lot.poster ?? null, lot.image ?? null)}
+      ${plate(
+        lot.name,
+        lot.emoji,
+        lot.poster ?? null,
+        lot.image ?? null,
+        view.canHostAct
+          ? `<button class="plate-edit" type="button" data-open="lot-image" data-item="${esc(lot.name)}" data-image="${esc(lot.image ?? "")}" data-credit="${esc(creditLine(view, lot.image))}" data-query="${esc(lot.name)}" data-label="${esc(lot.name)}" aria-label="${esc(t("cover.lotTitle"))}" title="${esc(t("cover.lotTitle"))}">✦</button>`
+          : "",
+      )}
       <div class="band-copy">
         <p class="band-overline">${esc(t("stage.lotUp"))}</p>
         <h1 id="auction-title" class="band-title">${esc(lot.name)}</h1>
@@ -871,6 +918,7 @@ function renderStage(view: View) {
       ? `<div class="game-layout game-layout--judging">${ledger(view, 0)}${ledger(view, 1)}</div>`
       : `<div class="game-layout">${ledger(view, 0)}${bidPanel(view)}${ledger(view, 1)}</div>`
   }
+  ${view.canHostAct && !judging ? lotImageDialog(view) : ""}
 </section>`;
 }
 

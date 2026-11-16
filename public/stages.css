@@ -105,4 +105,44 @@
     letter-spacing: 0.05em;
     opacity: 0.72;
   }
+
+  /* Кнопка хозяина на плашке: тихая, пока не наведёшь или не тронешь */
+  .plate-edit {
+    position: absolute;
+    inset-block-start: 0.35rem;
+    inset-inline-end: 0.35rem;
+    display: grid;
+    place-items: center;
+    inline-size: 1.6rem;
+    block-size: 1.6rem;
+    border: 1px solid var(--stage-line-strong);
+    border-radius: 50%;
+    background: rgb(0 0 0 / 48%);
+    color: var(--brass-soft);
+    font-size: 0.78rem;
+    line-height: 1;
+    opacity: 0.45;
+    transition: opacity 0.15s ease, background-color 0.15s ease;
+  }
+
+  .lot-plate:hover .plate-edit,
+  .plate-edit:focus-visible { opacity: 1; }
+  .plate-edit:hover { background: rgb(0 0 0 / 72%); }
+
+  @media (pointer: coarse) {
+    .plate-edit { opacity: 0.85; }
+  }
+
+  /* Диалоги внутри сцены живут бумажной палитрой, а не сценой */
+  .screen--game .modal-card .text-button {
+    border-color: var(--rule-strong);
+    background: var(--paper-raised);
+    color: var(--ink);
+  }
+
+  .screen--game .modal-card .text-button:hover {
+    border-color: var(--ink);
+    background: var(--ink);
+    color: var(--paper-raised);
+  }
 }

@@ -154,19 +154,20 @@ function applyCovers() {
 }
 
 /* ── подбор обложки: свои превью уже скачаны сервером, CSP чужие не пустит ── */
-async function findCoverOptions(dialog, trigger) {
-  const button = dialog.querySelector("#cover-find");
-  const box = dialog.querySelector("#cover-options");
+async function findImageOptions(dialog) {
+  const button = dialog.querySelector(".cover-find-button");
+  const box = dialog.querySelector(".cover-options");
   if (!button || !box) return;
-  const pack = trigger?.dataset.pack || dialog.querySelector('input[name="pack"]')?.value || "";
+  const field = (name) => dialog.querySelector(`input[name="${name}"]`)?.value || "";
+  const payload = { pack: field("pack"), item: field("item"), q: field("q") };
   const label = button.textContent;
   button.disabled = true;
   button.textContent = button.dataset.busy || label;
   try {
-    const response = await fetch("/act/cover-find", {
+    const response = await fetch(dialog.dataset.find || "/act/cover-find", {
       method: "POST",
       headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ pack }),
+      body: JSON.stringify(payload),
     });
     const data = await response.json().catch(() => ({ candidates: [] }));
     const candidates = Array.isArray(data.candidates) ? data.candidates : [];
@@ -197,7 +198,7 @@ async function findCoverOptions(dialog, trigger) {
         dialog.querySelector('input[name="author"]').value = candidate.author || "";
         dialog.querySelector('input[name="license"]').value = candidate.license || "";
         dialog.querySelector('input[name="page"]').value = candidate.page || "";
-        const line = dialog.querySelector("#cover-credit");
+        const line = dialog.querySelector("[data-credit]");
         if (line) {
           const credit = [candidate.author, candidate.license].filter(Boolean).join(" · ");
           line.textContent = credit ? `${line.dataset.prefix || ""} ${credit}`.trim() : "";
@@ -213,36 +214,46 @@ async function findCoverOptions(dialog, trigger) {
   }
 }
 
-/* ── диалог обложки: подставляем пак, который сейчас выбран ── */
-function prepareCover(dialog, trigger) {
+/* ── диалог картинки: обложка пака или постер лота ── */
+function prepareImageDialog(dialog, trigger) {
   const pack = trigger.dataset.pack || "";
-  const cover = trigger.dataset.cover || "";
+  const item = trigger.dataset.item || "";
+  const hash = trigger.dataset.cover || trigger.dataset.image || "";
   for (const input of dialog.querySelectorAll('input[name="pack"]')) input.value = pack;
-  const preview = dialog.querySelector("#cover-preview");
+  for (const input of dialog.querySelectorAll('input[name="item"]')) input.value = item;
+
+  const preview = dialog.querySelector("[data-preview]");
   const image = preview?.querySelector("img");
   if (preview && image) {
-    preview.hidden = !cover;
-    image.src = cover ? `/img/x/${cover}-192.webp` : "";
-    image.alt = cover ? trigger.dataset.label || "" : "";
+    const size = dialog.dataset.preview || "192";
+    preview.hidden = !hash;
+    image.src = hash ? `/img/x/${hash}-${size}.webp` : "";
+    image.alt = hash ? trigger.dataset.label || "" : "";
   }
-  const clear = dialog.querySelector("#cover-clear-form");
-  if (clear) clear.hidden = !cover;
-  const credit = dialog.querySelector("#cover-credit");
+
+  const clear = dialog.querySelector("[data-image-clear]");
+  if (clear) clear.hidden = !hash;
+
+  const credit = dialog.querySelector("[data-credit]");
   if (credit) credit.textContent = trigger.dataset.credit || "";
+
   for (const name of ["author", "license", "page"]) {
     const input = dialog.querySelector(`input[name="${name}"]`);
     if (input) input.value = "";
   }
-  const options = dialog.querySelector("#cover-options");
+  const options = dialog.querySelector("[data-options]");
   if (options) {
     options.hidden = true;
     options.textContent = "";
   }
-  const target = dialog.querySelector("#cover-target");
+  const target = dialog.querySelector("[data-target]");
   if (target) target.textContent = trigger.dataset.label || "";
+
+  const query = dialog.querySelector('input[name="q"]');
+  if (query) query.value = trigger.dataset.query || "";
   const url = dialog.querySelector('input[name="url"]');
   if (url) url.value = "";
-  setTimeout(() => url?.focus(), 60);
+  setTimeout(() => (query || url)?.focus(), 60);
 }
 
 /* ── клавиатура: B — ставка, P — пас, +/− — стартовая ставка ── */
@@ -326,7 +337,7 @@ function bind() {
     if (open) {
       const dialog = document.getElementById(open.dataset.open || "");
       if (dialog instanceof HTMLDialogElement) {
-        if (open.dataset.open === "cover") prepareCover(dialog, open);
+        if (dialog.classList.contains("cover-dialog")) prepareImageDialog(dialog, open);
         if (!dialog.open) dialog.showModal();
       }
       return;
@@ -338,9 +349,9 @@ function bind() {
       return;
     }
 
-    const find = event.target.closest("#cover-find");
+    const find = event.target.closest(".cover-find-button");
     if (find) {
-      void findCoverOptions(find.closest("dialog"), null);
+      void findImageOptions(find.closest("dialog"));
       return;
     }
 
