@@ -701,6 +701,67 @@ async function wikiPicture(name: string) {
  * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
  * кешируется, поэтому пак прогревается один раз на всех игроков.
  */
+type ImageCandidate = { url: string; author?: string; license?: string; page?: string };
+
+/** Собрать кандидатов по порядку доверия: арт, статья, свободные фото. */
+async function pictureCandidates(name: string, anime: boolean): Promise<ImageCandidate[]> {
+  const candidates: ImageCandidate[] = [];
+  if (anime) candidates.push(...(await anilistPictures(name).catch(() => [])));
+  const wiki = await wikiPicture(name).catch(() => null);
+  if (wiki) candidates.push(wiki);
+  const commons = await commonsCandidates(name).catch(() => []);
+  candidates.push(...commons.slice(0, 3));
+  return candidates.slice(0, 6);
+}
+
+/** Показать принятую картинку во всех комнатах, где есть этот предмет. */
+function refreshAuto(name: string, hash: string | null) {
+  for (const room of rooms.values()) {
+    const pack = room.customPack ?? content.packById.get(room.packId);
+    if (!pack || !(pack.items as string[]).includes(name)) continue;
+    if (hash) room.auto = { ...(room.auto ?? {}), [name]: hash };
+    else if (room.auto?.[name]) {
+      const next = { ...room.auto };
+      delete next[name];
+      room.auto = next;
+    }
+    creditsFor(room);
+    persist(room);
+    broadcast(room, "full");
+  }
+}
+
+/**
+ * Оптимистично показываем первого кандидата и проверяем его в фоне:
+ * если модель говорит «не то» — ставим следующего, а последнего убираем.
+ */
+async function verifyAndSwap(key: string, name: string, packName: string, currentHash: string, rest: ImageCandidate[]) {
+  const verdict = await verifyPicture(currentHash, name, packName);
+  if (verdict.ok) {
+    store.saveAutoImage(key, currentHash, verdict.checker);
+    return;
+  }
+  let checks = 1;
+  for (const candidate of rest) {
+    if (checks >= 4) break;
+    checks += 1;
+    try {
+      const image = await autoSlot(() => ingestImage(candidate.url, "item", candidate));
+      const next = await verifyPicture(image.hash, name, packName);
+      if (!next.ok) continue;
+      store.saveAutoImage(key, image.hash, next.checker);
+      if (next.what) console.log(`[image] «${name}» ← ${next.what}`);
+      refreshAuto(name, image.hash);
+      return;
+    } catch {
+      /* кандидат не скачался — берём следующего */
+    }
+  }
+  // Ничего верного не нашли: лучше пустая плашка, чем чужая картинка.
+  store.dropAutoImage(key);
+  refreshAuto(name, null);
+}
+
 async function resolveItemPicture(name: string, anime = false, high = false, packName = ""): Promise<string | null> {
   if (!AUTO_ENABLED) return null;
   const key = autoKey(name);
@@ -713,32 +774,17 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
 
   const job = autoSlot(async () => {
     try {
-      // Кандидаты по порядку доверия: официальный арт, статья, свободные фото.
-      const candidates: { url: string; author?: string; license?: string; page?: string }[] = [];
-      if (anime) candidates.push(...(await anilistPictures(name).catch(() => [])));
-      const wiki = await wikiPicture(name).catch(() => null);
-      if (wiki) candidates.push(wiki);
-      const commons = await commonsCandidates(name).catch(() => []);
-      candidates.push(...commons.slice(0, 3));
-
-      let checks = 0;
-      for (const candidate of candidates.slice(0, 6)) {
-        const image = await ingestImage(candidate.url, "item", {
-          author: candidate.author,
-          license: candidate.license,
-          page: candidate.page,
-        });
-        // Не гоняем модель по кругу: три вердикта на предмет — потолок.
-        if (checks >= 3) break;
-        checks += 1;
-        const verdict = await verifyPicture(image.hash, name, packName);
-        if (!verdict.ok) continue;
-        store.saveAutoImage(key, image.hash, verdict.checker);
-        if (verdict.what) console.log(`[image] «${name}» ← ${verdict.what}`);
-        return image.hash;
+      const candidates = await pictureCandidates(name, anime);
+      const first = candidates.shift();
+      if (!first) {
+        store.saveAutoMiss(key);
+        return null;
       }
-      store.saveAutoMiss(key);
-      return null;
+      const image = await ingestImage(first.url, "item", first);
+      const checker = IMAGE_CHECK ? "pending" : "heuristic";
+      store.saveAutoImage(key, image.hash, checker);
+      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, candidates);
+      return image.hash;
     } catch {
       store.saveAutoMiss(key);
       return null;
@@ -748,6 +794,19 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
   }, high);
   autoInflight.set(key, job);
   return job;
+}
+
+/** Недопроверенные картинки (рестарт посреди проверки) досматриваем при загрузке. */
+const pendingChecks = new Set<string>();
+
+function recheckPending(name: string, packName: string) {
+  if (!IMAGE_CHECK) return;
+  const key = autoKey(name);
+  if (pendingChecks.has(key)) return;
+  const info = store.autoImageInfo(key);
+  if (!info || info.checker !== "pending") return;
+  pendingChecks.add(key);
+  void verifyAndSwap(key, name, packName, info.hash, []).finally(() => pendingChecks.delete(key));
 }
 
 /** Подтянуть из кеша всё, что уже найдено для выбранного пака. */

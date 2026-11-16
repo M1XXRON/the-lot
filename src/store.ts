@@ -316,9 +316,11 @@ const setItemStmt = db.prepare(
 const dropItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ?");
 const dropOneItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ? AND item = ?");
 const autoItemStmt = db.prepare("SELECT hash FROM auto_items WHERE name = ? AND checker != ''");
+const autoInfoStmt = db.prepare("SELECT hash, checker FROM auto_items WHERE name = ?");
 const putAutoItemStmt = db.prepare(
   "INSERT INTO auto_items (name, hash, checker, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, checker = excluded.checker, updated_at = excluded.updated_at",
 );
+const dropAutoItemStmt = db.prepare("DELETE FROM auto_items WHERE name = ?");
 const autoMissStmt = db.prepare("SELECT updated_at FROM auto_misses WHERE name = ?");
 const putAutoMissStmt = db.prepare(
   "INSERT INTO auto_misses (name, updated_at) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET updated_at = excluded.updated_at",
@@ -407,10 +409,20 @@ export function autoImage(name: string): string | null {
   return row?.hash ?? null;
 }
 
+/** @param {string} name */
+export function autoImageInfo(name: string): { hash: string; checker: string } | null {
+  return (autoInfoStmt.get(name) as { hash: string; checker: string } | null) ?? null;
+}
+
 /** @param {string} name @param {string} hash @param {string} checker */
 export function saveAutoImage(name: string, hash: string, checker: string) {
   putAutoItemStmt.run(name, hash, checker, Date.now());
   dropAutoMissStmt.run(name);
+}
+
+/** @param {string} name */
+export function dropAutoImage(name: string) {
+  dropAutoItemStmt.run(name);
 }
 
 /** @param {string} name @param {number} ttl */
