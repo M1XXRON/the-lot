@@ -77,7 +77,7 @@ export function client(base) {
 
   return {
     jar,
-    get: (path) => request(path),
+    get: (path, init) => request(path, init),
     async html(path) {
       const response = await request(path);
       return { status: response.status, html: await response.text(), headers: response.headers };

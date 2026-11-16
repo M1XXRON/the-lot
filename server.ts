@@ -125,6 +125,17 @@ function html(body: string, status = 200, extra: Record<string, string> = {}) {
   });
 }
 
+/**
+ * Комната почти всегда одинакова между перезагрузками (каталог на 250 КБ),
+ * поэтому отдаём её с ETag: браузер перепроверяет и получает 304 без тела.
+ */
+function roomHtml(request: Request, body: string) {
+  const etag = `W/"${Bun.hash(body).toString(36)}"`;
+  const headers = { ...SECURITY_HEADERS, ETag: etag, "Cache-Control": "private, no-cache" };
+  if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
+  return new Response(body, { status: 200, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } });
+}
+
 function json(value: unknown, status = 200, extra: Record<string, string> = {}) {
   return new Response(JSON.stringify(value), {
     status,
@@ -1009,7 +1020,7 @@ const server = Bun.serve({
       libraryFor(room);
       const pageView: any = engine.view(room, sid, origin);
       pageView.lang = langOf(request);
-      return withSid(html(roomPage(pageView)));
+      return withSid(roomHtml(request, roomPage(pageView)));
     }
 
     if (path === "/favicon.ico") return new Response(null, { status: 204, headers: SECURITY_HEADERS });

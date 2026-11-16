@@ -268,6 +268,26 @@ async function discoverability(server) {
   return { code: "sitemap" };
 }
 
+/** Комната перепроверяется по ETag: неизменное лобби отдаётся как 304. */
+async function roomEtag(server) {
+  const host = client(server.base);
+  const created = await host.form("/act/create", { mode: "local", name: "ALEX" });
+  const { code } = roomCodeFrom(created);
+  const first = await host.html(`/r/${code}`);
+  const etag = first.headers.get("etag");
+  assert(etag, "у страницы комнаты нет ETag");
+  assert((first.headers.get("cache-control") ?? "").includes("no-cache"), "комната не перепроверяется кешем");
+
+  const repeat = await host.get(`/r/${code}`, { headers: { "if-none-match": etag } });
+  assert(repeat.status === 304, `повтор комнаты вернул ${repeat.status}, ждали 304`);
+  assert((await repeat.text()) === "", "304 пришёл с телом");
+
+  await host.actJson("pack", { pack: "free-fast-food" });
+  const changed = await host.get(`/r/${code}`, { headers: { "if-none-match": etag } });
+  assert(changed.status === 200, `изменённая комната вернула ${changed.status}, ждали 200`);
+  return { code };
+}
+
 /** Версионированная статика кешируется на год и не трогает cookie. */
 async function staticCache(server) {
   const landing = await (await fetch(`${server.base}/`)).text();
@@ -348,6 +368,7 @@ const checks = [
   ["saved packs", () => savedPacks(server)],
   ["ops health", () => opsHealth(server)],
   ["sitemap & sw", () => discoverability(server)],
+  ["room etag", () => roomEtag(server)],
   ["static cache", () => staticCache(server)],
   ["rate limit", () => rateLimit(server)],
   ["player history", () => history(server)],
