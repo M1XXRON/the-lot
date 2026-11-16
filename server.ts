@@ -783,6 +783,14 @@ async function verifyPicture(hash: string, item: string, pack: string, trusted =
 }
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
+/** В фандоме берём только страницу самого персонажа, а не кроссовер «Punisher/Batman». */
+function fandomTitleMatch(item: string, title: string) {
+  const a = item.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  const b = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+  if (!a || !b) return false;
+  return a === b || b.startsWith(`${a} `);
+}
+
 /** Официальный арт персонажа из фандома: сначала точная страница, потом поиск. */
 async function fandomPicture(name: string, hosts: string[]) {
   const wanted = searchQuery(name);
@@ -807,7 +815,7 @@ async function fandomPicture(name: string, hosts: string[]) {
     if (exact?.ok) {
       const body: any = await exact.json().catch(() => null);
       const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
-      if (page?.thumbnail?.source && titleMatches(name, String(page.title ?? ""))) {
+      if (page?.thumbnail?.source && fandomTitleMatch(name, String(page.title ?? ""))) {
         return {
           url: String(page.thumbnail.source),
           title: String(page.title ?? wanted),
@@ -835,7 +843,7 @@ async function fandomPicture(name: string, hosts: string[]) {
     if (!search?.ok) continue;
     const body: any = await search.json().catch(() => null);
     const pages = Array.isArray(body?.query?.pages) ? body.query.pages : [];
-    const best = pages.find((page: any) => page?.thumbnail?.source && titleMatches(name, String(page.title ?? "")));
+    const best = pages.find((page: any) => page?.thumbnail?.source && fandomTitleMatch(name, String(page.title ?? "")));
     if (best) {
       return {
         url: String(best.thumbnail.source),
