@@ -1074,6 +1074,11 @@ async function verifyAndSwap(
     checks += 1;
     try {
       const image = await autoSlot(() => ingestImage(candidate.url, "item", candidate));
+      if (candidate.trusted && !candidate.weak) {
+        store.saveAutoImage(key, image.hash, "source");
+        refreshAuto(name, image.hash);
+        return;
+      }
       const next = await verifyPicture(image.hash, name, packName, candidate.trusted, candidate.title, true, candidate.weak);
       if (!next.ok) continue;
       store.saveAutoImage(key, image.hash, next.checker);
@@ -1122,7 +1127,7 @@ async function resolveItemPicture(
           return null;
         }
         const image = await ingestImage(pick.url, "item", pick);
-        store.saveAutoImage(key, image.hash, "heuristic");
+        store.saveAutoImage(key, image.hash, pick.trusted ? "source" : "heuristic");
         return image.hash;
       }
 
@@ -1130,11 +1135,18 @@ async function resolveItemPicture(
         store.saveAutoMiss(key);
         return null;
       }
+
+      // Официальный арт AniList/Fandom не отдаём на суд модели: она уже путала
+      // Вижена с Марсианским охотником. Модель проверяет только догадки.
+      if (first.trusted && !first.weak) {
+        const image = await ingestImage(first.url, "item", first);
+        store.saveAutoImage(key, image.hash, "source");
+        return image.hash;
+      }
+
       const image = await ingestImage(first.url, "item", first);
-      // Библиотека качает без vision: на экране картинка всё равно будет проверена.
-      const checker = verify ? "pending" : "heuristic";
-      store.saveAutoImage(key, image.hash, checker);
-      if (verify) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title, first.weak === true);
+      store.saveAutoImage(key, image.hash, "pending");
+      void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title, first.weak === true);
       return image.hash;
     } catch {
       store.saveAutoMiss(key);
