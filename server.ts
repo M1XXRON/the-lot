@@ -681,6 +681,12 @@ function searchQuery(name: string) {
     .slice(0, 80);
 }
 
+/** Паки супергероев: официальный арт берём из фандомов Marvel/DC, а не из косплея на Commons. */
+const FANDOM_PACKS: Record<string, string[]> = {
+  superheroes: ["marvel", "dc"],
+  "hot-spiderman-villains": ["marvel", "dc"],
+};
+
 /** Короткий контекст по вкладке каталога — запасной вариант, если имя пака не помогло. */
 const TAB_CONTEXT: Record<string, string> = {
   ANIME: "anime",
@@ -777,6 +783,72 @@ async function verifyPicture(hash: string, item: string, pack: string, trusted =
 }
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
+/** Официальный арт персонажа из фандома: сначала точная страница, потом поиск. */
+async function fandomPicture(name: string, hosts: string[]) {
+  const wanted = searchQuery(name);
+  if (!wanted) return null;
+
+  for (const host of hosts) {
+    const base = `https://${host}.fandom.com/api.php`;
+    const exactUrl = new URL(base);
+    exactUrl.searchParams.set("action", "query");
+    exactUrl.searchParams.set("titles", wanted);
+    exactUrl.searchParams.set("redirects", "1");
+    exactUrl.searchParams.set("prop", "pageimages");
+    exactUrl.searchParams.set("piprop", "thumbnail");
+    exactUrl.searchParams.set("pithumbsize", "400");
+    exactUrl.searchParams.set("format", "json");
+    exactUrl.searchParams.set("formatversion", "2");
+
+    const exact = await fetch(exactUrl, {
+      headers: { "user-agent": IMAGE_UA, accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    }).catch(() => null);
+    if (exact?.ok) {
+      const body: any = await exact.json().catch(() => null);
+      const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
+      if (page?.thumbnail?.source && titleMatches(name, String(page.title ?? ""))) {
+        return {
+          url: String(page.thumbnail.source),
+          title: String(page.title ?? wanted),
+          page: `https://${host}.fandom.com/wiki/${encodeURIComponent(String(page.title ?? wanted).replace(/ /g, "_"))}`,
+          license: host === "marvel" ? "Marvel Database" : "DC Database",
+          trusted: true,
+        };
+      }
+    }
+
+    const searchUrl = new URL(base);
+    searchUrl.searchParams.set("action", "query");
+    searchUrl.searchParams.set("generator", "search");
+    searchUrl.searchParams.set("gsrsearch", wanted);
+    searchUrl.searchParams.set("gsrlimit", "6");
+    searchUrl.searchParams.set("prop", "pageimages");
+    searchUrl.searchParams.set("piprop", "thumbnail");
+    searchUrl.searchParams.set("pithumbsize", "400");
+    searchUrl.searchParams.set("format", "json");
+    searchUrl.searchParams.set("formatversion", "2");
+    const search = await fetch(searchUrl, {
+      headers: { "user-agent": IMAGE_UA, accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    }).catch(() => null);
+    if (!search?.ok) continue;
+    const body: any = await search.json().catch(() => null);
+    const pages = Array.isArray(body?.query?.pages) ? body.query.pages : [];
+    const best = pages.find((page: any) => page?.thumbnail?.source && titleMatches(name, String(page.title ?? "")));
+    if (best) {
+      return {
+        url: String(best.thumbnail.source),
+        title: String(best.title ?? wanted),
+        page: `https://${host}.fandom.com/wiki/${encodeURIComponent(String(best.title ?? wanted).replace(/ /g, "_"))}`,
+        license: host === "marvel" ? "Marvel Database" : "DC Database",
+        trusted: true,
+      };
+    }
+  }
+  return null;
+}
+
 async function wikiLookup(query: string) {
   if (!query) return { found: false, candidate: null };
   // Английская Википедия точнее различает омонимы, русская — богаче свободными фото.
@@ -861,9 +933,24 @@ async function commonsWithContext(name: string, packName: string, tab = ""): Pro
  * Первого кандидата отдаём сразу, остальных догружаем только если проверка
  * забракует: у аниме это ещё арт-варианты, затем статья и свободные фото.
  */
-async function primaryPicture(name: string, anime: boolean, high: boolean, packName: string, tab = "") {
+async function primaryPicture(name: string, anime: boolean, high: boolean, packName: string, tab = "", packId = "") {
   let extras: ImageCandidate[] = [];
   let loadExtras: (() => Promise<ImageCandidate[]>) | null = null;
+
+  const fandomHosts = FANDOM_PACKS[packId];
+  if (fandomHosts) {
+    const art = await fandomPicture(name, fandomHosts).catch(() => null);
+    if (art) {
+      loadExtras = async () => {
+        const list: ImageCandidate[] = [];
+        const wiki = await wikiPicture(name, packName, tab).catch(() => null);
+        if (wiki) list.push(wiki);
+        list.push(...(await commonsWithContext(name, packName, tab)).slice(0, 3));
+        return list;
+      };
+      return { first: art, extras, loadExtras };
+    }
+  }
 
   if (anime) {
     const art = await anilistPictures(name, high).catch(() => []);
@@ -971,6 +1058,7 @@ async function resolveItemPicture(
   packName = "",
   tab = "",
   verify = true,
+  packId = "",
 ): Promise<string | null> {
   if (!AUTO_ENABLED) return null;
   const key = autoKey(name);
@@ -983,7 +1071,7 @@ async function resolveItemPicture(
 
   const job = autoSlot(async () => {
     try {
-      const { first, extras, loadExtras } = await primaryPicture(name, anime, high, packName, tab);
+      const { first, extras, loadExtras } = await primaryPicture(name, anime, high, packName, tab, packId);
       if (!first) {
         store.saveAutoMiss(key);
         return null;
@@ -1094,7 +1182,7 @@ async function prefetchPack(room: any) {
     for (;;) {
       const name = queue.shift();
       if (!name) return;
-      const hash = await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name, pack.tab);
+      const hash = await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name, pack.tab, true, pack.id);
       if (!hash) continue;
       room.auto = { ...(room.auto ?? {}), [name]: hash };
       creditsFor(room);
@@ -1142,7 +1230,7 @@ async function ensureLotPicture(room: any) {
         verifiedOnScreen.add(key);
         void (async () => {
           try {
-            const { extras, loadExtras } = await primaryPicture(lot.name, pack.tab === "ANIME", true, pack.name, pack.tab);
+            const { extras, loadExtras } = await primaryPicture(lot.name, pack.tab === "ANIME", true, pack.name, pack.tab, pack.id);
             const title = store.imageByHash(info.hash)?.title ?? "";
             await verifyAndSwap(key, lot.name, pack.name, info.hash, extras, loadExtras, true, title);
           } catch {
@@ -1155,7 +1243,7 @@ async function ensureLotPicture(room: any) {
   }
   // Текущий лот — вне очереди прогрева и вне общей очереди источников.
   if (Array.isArray(room.prefetchQueue)) room.prefetchQueue.unshift(lot.name);
-  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true, pack.name, pack.tab);
+  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true, pack.name, pack.tab, true, pack.id);
   if (!hash) return;
   room.auto = { ...(room.auto ?? {}), [lot.name]: hash };
   creditsFor(room);
