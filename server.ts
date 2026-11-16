@@ -1863,12 +1863,13 @@ const server = Bun.serve({
 
     if (path === "/catalog" || path === "/catalog.txt") {
       // Каталог неизменяем: версия в ссылке, поэтому кеш на год и без cookie.
+      // text/plain — чтобы край Cloudflare кешировал ответ: HTML он не держит.
       const lang: Lang = url.searchParams.get("lang") === "en" ? "en" : "ru";
       const immutable = url.searchParams.get("v") === ASSET_VERSION;
       return new Response(catalogFragment(lang), {
         headers: {
           ...SECURITY_HEADERS,
-          "Content-Type": "text/html; charset=utf-8",
+          "Content-Type": "text/plain; charset=utf-8",
           "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=300",
         },
       });
