@@ -428,8 +428,8 @@ export async function checkImage(url: string, item: string, pack: string, lang: 
   if (mock || !apiKey) return null;
   const question =
     lang === "en"
-      ? `Image for the item "${item}" in the pack "${pack}". Answer with JSON only: {"ok":true|false,"what":"what is in the picture, 2-4 words"}. ok=true only if the picture really shows this item (or its obvious depiction), otherwise false.`
-      : `Картинка к предмету «${item}» в паке «${pack}». Ответь строго JSON: {"ok":true|false,"what":"что на картинке, 2–4 слова"}. ok=true только если на картинке действительно этот предмет (или его очевидное изображение), иначе false.`;
+      ? `Image for the item "${item}" in the pack "${pack}". Answer with JSON only: {"ok":true|false,"what":"what is in the picture, 2-4 words"}. ok=true only if the picture shows this item itself (the character, drink or thing), not a similar object, a dish containing it, packaging or another meaning of the word.`
+      : `Картинка к предмету «${item}» в паке «${pack}». Ответь строго JSON: {"ok":true|false,"what":"что на картинке, 2–4 слова"}. ok=true только если на картинке сам предмет (этот персонаж, напиток, вещь), а не похожий объект, блюдо с ним, упаковка или другое значение слова.`;
 
   let response: Response;
   try {

@@ -110,7 +110,7 @@ try {
 // Атрибуция картинок появилась позже: догоняем существующие базы.
 try {
   const columns = db.query("PRAGMA table_info(images)").all() as { name: string }[];
-  for (const [name, type] of [["author", "TEXT"], ["license", "TEXT"], ["page", "TEXT"]]) {
+  for (const [name, type] of [["author", "TEXT"], ["license", "TEXT"], ["page", "TEXT"], ["title", "TEXT"]]) {
     if (!columns.some((column) => column.name === name)) db.exec(`ALTER TABLE images ADD COLUMN ${name} ${type} NOT NULL DEFAULT ''`);
   }
 } catch {
@@ -294,17 +294,19 @@ export type StoredImage = {
   author: string;
   license: string;
   page: string;
+  title: string;
 };
 
 const insertImage = db.prepare(
-  "INSERT INTO images (hash, source, mime, width, height, author, license, page, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) " +
+  "INSERT INTO images (hash, source, mime, width, height, author, license, page, title, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
     "ON CONFLICT(hash) DO UPDATE SET " +
     "author = CASE WHEN images.author = '' THEN excluded.author ELSE images.author END, " +
     "license = CASE WHEN images.license = '' THEN excluded.license ELSE images.license END, " +
-    "page = CASE WHEN images.page = '' THEN excluded.page ELSE images.page END",
+    "page = CASE WHEN images.page = '' THEN excluded.page ELSE images.page END, " +
+    "title = CASE WHEN images.title = '' THEN excluded.title ELSE images.title END",
 );
-const getImage = db.prepare("SELECT hash, source, mime, width, height, author, license, page FROM images WHERE hash = ?");
-const getImages = db.prepare("SELECT hash, source, mime, width, height, author, license, page FROM images WHERE hash IN (SELECT value FROM json_each(?))");
+const getImage = db.prepare("SELECT hash, source, mime, width, height, author, license, page, title FROM images WHERE hash = ?");
+const getImages = db.prepare("SELECT hash, source, mime, width, height, author, license, page, title FROM images WHERE hash IN (SELECT value FROM json_each(?))");
 const setCoverStmt = db.prepare(
   "INSERT INTO pack_covers (owner, pack, hash, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(owner, pack) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
 );
@@ -343,6 +345,7 @@ export function saveImage(image: StoredImage) {
     image.author ?? "",
     image.license ?? "",
     image.page ?? "",
+    image.title ?? "",
     Date.now(),
   );
 }

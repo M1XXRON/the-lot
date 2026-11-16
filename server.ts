@@ -367,7 +367,7 @@ const IMAGE_PROFILES = {
 
 type ImageProfile = keyof typeof IMAGE_PROFILES;
 
-type ImageCredit = { author?: string; license?: string; page?: string };
+type ImageCredit = { author?: string; license?: string; page?: string; title?: string };
 
 /** Скачивает картинку по ссылке и раскладывает её в два webp-размера. */
 async function ingestImage(raw: string, profile: ImageProfile, credit: ImageCredit = {}) {
@@ -446,6 +446,7 @@ async function ingestImage(raw: string, profile: ImageProfile, credit: ImageCred
       author: cleanCredit(credit.author, 80),
       license: cleanCredit(credit.license, 40),
       page: cleanCredit(credit.page, 400),
+      title: cleanCredit(credit.title, 120),
     });
     return { hash, source: current.toString() };
   }
@@ -648,6 +649,18 @@ function editDistance(a: string, b: string) {
   return previous[cols - 1]!;
 }
 
+/** Совпадает ли название статьи/файла с предметом (для проверки без модели). */
+function titleMatches(item: string, title: string) {
+  if (!title) return false;
+  const itemNorm = item.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  const titleNorm = title.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+  if (!itemNorm || !titleNorm) return false;
+  if (titleNorm.includes(itemNorm) || itemNorm.includes(titleNorm)) return true;
+  const wanted = tokensOf(item);
+  const got = tokensOf(title);
+  return wanted.some((token) => got.some((other) => other === token || (other.length >= 4 && token.length >= 4 && editDistance(other, token) <= 1)));
+}
+
 function tokenSimilar(token: string, list: string[]) {
   return list.some((other) => {
     if (other === token) return true;
@@ -708,6 +721,7 @@ async function anilistPictures(name: string, high = false) {
       license: "AniList",
       page: String(character.siteUrl ?? "https://anilist.co"),
       author: "",
+      title: String(character.name?.full ?? ""),
       trusted: true,
     }));
 }
@@ -735,14 +749,16 @@ async function checkSlot<T>(run: () => Promise<T>): Promise<T> {
  */
 let lastCheckAt = 0;
 
-async function verifyPicture(hash: string, item: string, pack: string, trusted = false) {
-  if (!IMAGE_CHECK) return trusted ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
+async function verifyPicture(hash: string, item: string, pack: string, trusted = false, title = "", requireTitle = true) {
+  const fallback = title ? titleMatches(item, title) : !requireTitle;
+  if (!IMAGE_CHECK) return fallback ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   const url = `${PUBLIC_BASE}/img/x/${hash}-342.webp`;
   const gap = lastCheckAt + 250 - Date.now();
   if (gap > 0) await Bun.sleep(gap);
   lastCheckAt = Date.now();
   const verdict = await checkSlot(() => checkImage(url, item, pack)).catch(() => null);
-  if (!verdict) return trusted ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
+  // Модель молчит: принимаем только если статья/файл действительно про этот предмет.
+  if (!verdict) return fallback ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   if (!verdict.ok) console.log(`[image] отклонено «${item}» (${pack}): ${verdict.what || "не то"}`);
   return { ok: verdict.ok, what: verdict.what, checker: "vision" };
 }
@@ -781,6 +797,7 @@ async function wikiLookup(query: string) {
         url: String(thumb.source),
         license: lang === "ru" ? "Википедия" : "Wikipedia",
         page: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(page.title ?? query).replace(/ /g, "_"))}`,
+        title: String(page.title ?? ""),
       },
     };
   }
@@ -803,7 +820,7 @@ async function wikiPicture(name: string, packName = "") {
  * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
  * кешируется, поэтому пак прогревается один раз на всех игроков.
  */
-type ImageCandidate = { url: string; author?: string; license?: string; page?: string; trusted?: boolean };
+type ImageCandidate = { url: string; author?: string; license?: string; page?: string; title?: string; trusted?: boolean };
 
 /** Сначала ищем с названием пака, если пусто — по одному предмету. */
 async function commonsWithContext(name: string, packName: string): Promise<ImageCandidate[]> {
@@ -881,8 +898,9 @@ async function verifyAndSwap(
   rest: ImageCandidate[],
   loadExtras: (() => Promise<ImageCandidate[]>) | null = null,
   trusted = true,
+  currentTitle = "",
 ) {
-  const verdict = await verifyPicture(currentHash, name, packName, trusted);
+  const verdict = await verifyPicture(currentHash, name, packName, trusted, currentTitle);
   if (verdict.ok) {
     store.saveAutoImage(key, currentHash, verdict.checker);
     return;
@@ -902,7 +920,7 @@ async function verifyAndSwap(
     checks += 1;
     try {
       const image = await autoSlot(() => ingestImage(candidate.url, "item", candidate));
-      const next = await verifyPicture(image.hash, name, packName, candidate.trusted);
+      const next = await verifyPicture(image.hash, name, packName, candidate.trusted, candidate.title);
       if (!next.ok) continue;
       store.saveAutoImage(key, image.hash, next.checker);
       if (next.what) console.log(`[image] «${name}» ← ${next.what}`);
@@ -937,7 +955,7 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
       const image = await ingestImage(first.url, "item", first);
       const checker = IMAGE_CHECK ? "pending" : "heuristic";
       store.saveAutoImage(key, image.hash, checker);
-      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted);
+      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted, first.title);
       return image.hash;
     } catch {
       store.saveAutoMiss(key);
@@ -963,8 +981,9 @@ function recheckPending(name: string, packName: string) {
   // «pending» — проверка не доехала; «heuristic» — модель молчала, перепроверим позже.
   const stale = info.checker === "heuristic" && Date.now() - info.updated_at > HEURISTIC_RECHECK;
   if (info.checker !== "pending" && !stale) return;
+  const title = store.imageByHash(info.hash)?.title ?? "";
   pendingChecks.add(key);
-  void verifyAndSwap(key, name, packName, info.hash, []).finally(() => pendingChecks.delete(key));
+  void verifyAndSwap(key, name, packName, info.hash, [], null, true, title).finally(() => pendingChecks.delete(key));
 }
 
 /** Подтянуть из кеша всё, что уже найдено для выбранного пака. */

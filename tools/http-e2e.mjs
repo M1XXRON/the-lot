@@ -84,9 +84,10 @@ const imageSource = Bun.serve({
       return new Response(JSON.stringify({ data: { Page: { characters } } }), { headers: { "content-type": "application/json" } });
     }
     if (url.pathname.endsWith("/w/api.php")) {
-      const q = (url.searchParams.get("gsrsearch") || "").toLowerCase();
+      const raw = url.searchParams.get("gsrsearch") || "";
+      const q = raw.toLowerCase();
       const pages = q.startsWith("soda ")
-        ? [{ title: "Soda", thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 } }]
+        ? [{ title: raw.replace(/^soda\s+/i, ""), thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 } }]
         : [];
       return new Response(JSON.stringify({ query: { pages } }), { headers: { "content-type": "application/json" } });
     }
