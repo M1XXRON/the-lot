@@ -2,7 +2,7 @@
 
 Дом драфта на двоих: пять пиков, двадцать монет, один победитель. Сервер на Bun, состояние на сервере, UI обновляется HTML-патчами по SSE через Datastar.
 
-**Прод:** <https://lot.bunker9.lol>
+**Прод:** <https://lot.bunker9.lol> · **Код:** <https://github.com/M1XXRON/the-lot>
 
 ## Стек
 
