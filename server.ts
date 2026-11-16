@@ -447,7 +447,7 @@ const SEARCH_TTL = 10 * 60 * 1000;
 const SEARCH_CACHE_LIMIT = 120;
 const searchCache = new Map<string, { expires: number; list: CoverCandidate[] }>();
 
-type CoverCandidate = { thumb: string; url: string; title: string; author: string; license: string; page: string };
+type CoverCandidate = { thumb: string; url: string; title: string; author: string; license: string; page: string; trusted?: boolean };
 
 function plainText(value: unknown, max = 80) {
   return String(value ?? "")
@@ -461,7 +461,9 @@ function plainText(value: unknown, max = 80) {
     .slice(0, max);
 }
 
-async function commonsCandidates(query: string): Promise<CoverCandidate[]> {
+async function commonsCandidates(rawQuery: string, strict = false): Promise<CoverCandidate[]> {
+  const query = searchQuery(rawQuery);
+  if (!query) return [];
   const url = new URL(COMMONS_API);
   url.searchParams.set("action", "query");
   url.searchParams.set("generator", "search");
@@ -493,9 +495,17 @@ async function commonsCandidates(query: string): Promise<CoverCandidate[]> {
       author: plainText(meta.Artist?.value, 80),
       license: plainText(meta.LicenseShortName?.value, 40),
       page: String(info.descriptionurl),
+      trusted: false,
     });
   }
-  return out;
+  if (!strict) return out;
+  // Для карточек предметов берём только файлы, в названии которых есть сам предмет.
+  const wanted = tokensOf(query);
+  if (wanted.length === 0) return [];
+  return out.filter((candidate) => {
+    const got = tokensOf(candidate.title);
+    return wanted.some((token) => tokenSimilar(token, got));
+  });
 }
 
 async function openverseCandidates(query: string): Promise<CoverCandidate[]> {
@@ -632,8 +642,20 @@ function tokenSimilar(token: string, list: string[]) {
   });
 }
 
+/** Поисковый запрос без служебных слов: «Edward & Alphonse» ищется как «Edward Alphonse». */
+function searchQuery(name: string) {
+  return name
+    .replace(/\s+vs\.?\s+.*$/i, "")
+    .replace(/\s*&\s*/g, " ")
+    .replace(/\b(and|the)\b/gi, " ")
+    .replace(/["'’]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
+}
+
 async function anilistPictures(name: string, high = false) {
-  const query = name.replace(/\s+vs\.?\s+.*$/i, "").replace(/["'’]/g, "").trim().slice(0, 80);
+  const query = searchQuery(name);
   if (!query) return [];
   await anilistTick(high);
   const response = await fetch(ANILIST_API, {
@@ -660,6 +682,7 @@ async function anilistPictures(name: string, high = false) {
       license: "AniList",
       page: String(character.siteUrl ?? "https://anilist.co"),
       author: "",
+      trusted: true,
     }));
 }
 
@@ -684,22 +707,24 @@ async function checkSlot<T>(run: () => Promise<T>): Promise<T> {
  * Смотрит на скачанную картинку глазами модели. Без публичного адреса
  * или ключа проверка недоступна — тогда верим источникам (checker=heuristic).
  */
-async function verifyPicture(hash: string, item: string, pack: string) {
-  if (!IMAGE_CHECK) return { ok: true, what: "", checker: "heuristic" };
+async function verifyPicture(hash: string, item: string, pack: string, trusted = false) {
+  if (!IMAGE_CHECK) return trusted ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   const url = `${PUBLIC_BASE}/img/x/${hash}-342.webp`;
   const verdict = await checkSlot(() => checkImage(url, item, pack)).catch(() => null);
-  if (!verdict) return { ok: true, what: "", checker: "heuristic" };
+  if (!verdict) return trusted ? { ok: true, what: "", checker: "heuristic" } : { ok: false, what: "", checker: "heuristic" };
   if (!verdict.ok) console.log(`[image] отклонено «${item}» (${pack}): ${verdict.what || "не то"}`);
   return { ok: verdict.ok, what: verdict.what, checker: "vision" };
 }
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
 async function wikiPicture(name: string) {
+  const query = searchQuery(name);
+  if (!query) return null;
   for (const lang of ["ru", "en"]) {
     const url = new URL(WIKI_API.replace("{lang}", lang));
     url.searchParams.set("action", "query");
     url.searchParams.set("generator", "search");
-    url.searchParams.set("gsrsearch", name);
+    url.searchParams.set("gsrsearch", query);
     url.searchParams.set("gsrlimit", "1");
     url.searchParams.set("prop", "pageimages|info");
     url.searchParams.set("piprop", "thumbnail");
@@ -721,7 +746,7 @@ async function wikiPicture(name: string) {
     return {
       url: String(thumb.source),
       license: lang === "ru" ? "Википедия" : "Wikipedia",
-      page: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(page.title ?? name).replace(/ /g, "_"))}`,
+      page: `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(String(page.title ?? query).replace(/ /g, "_"))}`,
     };
   }
   return null;
@@ -731,7 +756,7 @@ async function wikiPicture(name: string) {
  * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
  * кешируется, поэтому пак прогревается один раз на всех игроков.
  */
-type ImageCandidate = { url: string; author?: string; license?: string; page?: string };
+type ImageCandidate = { url: string; author?: string; license?: string; page?: string; trusted?: boolean };
 
 /**
  * Первого кандидата отдаём сразу, остальных догружаем только если проверка
@@ -750,7 +775,7 @@ async function primaryPicture(name: string, anime: boolean, high: boolean) {
         const list: ImageCandidate[] = [];
         const wiki = await wikiPicture(name).catch(() => null);
         if (wiki) list.push(wiki);
-        list.push(...(await commonsCandidates(name).catch(() => [])).slice(0, 3));
+        list.push(...(await commonsCandidates(name, true).catch(() => [])).slice(0, 3));
         return list;
       };
       return { first: first!, extras, loadExtras };
@@ -759,11 +784,11 @@ async function primaryPicture(name: string, anime: boolean, high: boolean) {
 
   const wiki = await wikiPicture(name).catch(() => null);
   if (wiki) {
-    loadExtras = async () => (await commonsCandidates(name).catch(() => [])).slice(0, 3);
+    loadExtras = async () => (await commonsCandidates(name, true).catch(() => [])).slice(0, 3);
     return { first: wiki, extras, loadExtras };
   }
 
-  const commons = await commonsCandidates(name).catch(() => []);
+  const commons = await commonsCandidates(name, true).catch(() => []);
   return { first: commons[0] ?? null, extras: commons.slice(1, 4), loadExtras: null };
 }
 
@@ -795,8 +820,9 @@ async function verifyAndSwap(
   currentHash: string,
   rest: ImageCandidate[],
   loadExtras: (() => Promise<ImageCandidate[]>) | null = null,
+  trusted = true,
 ) {
-  const verdict = await verifyPicture(currentHash, name, packName);
+  const verdict = await verifyPicture(currentHash, name, packName, trusted);
   if (verdict.ok) {
     store.saveAutoImage(key, currentHash, verdict.checker);
     return;
@@ -816,7 +842,7 @@ async function verifyAndSwap(
     checks += 1;
     try {
       const image = await autoSlot(() => ingestImage(candidate.url, "item", candidate));
-      const next = await verifyPicture(image.hash, name, packName);
+      const next = await verifyPicture(image.hash, name, packName, candidate.trusted);
       if (!next.ok) continue;
       store.saveAutoImage(key, image.hash, next.checker);
       if (next.what) console.log(`[image] «${name}» ← ${next.what}`);
@@ -851,7 +877,7 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
       const image = await ingestImage(first.url, "item", first);
       const checker = IMAGE_CHECK ? "pending" : "heuristic";
       store.saveAutoImage(key, image.hash, checker);
-      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras);
+      if (IMAGE_CHECK) void verifyAndSwap(key, name, packName, image.hash, extras, loadExtras, first.trusted);
       return image.hash;
     } catch {
       store.saveAutoMiss(key);
