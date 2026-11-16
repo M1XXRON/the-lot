@@ -68,7 +68,7 @@ export const tabs = (library.tabs ?? [])
 export const BUDGET = 20;
 export const PICKS = 5;
 export const JUDGE_LABEL = {
-  party: "Luna AI",
+  party: "Pi AI",
   "character-power": "Power rating",
   "athlete-performance": "Sports rating",
   "internet-ratings": "TMDb rating",

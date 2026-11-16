@@ -57,11 +57,11 @@ const ru: Dict = {
   "lobby.tableFull": "СТОЛ ЗАНЯТ",
   "lobby.onDevice": "ОДНО УСТРОЙСТВО",
   "lobby.onDeviceNote": "Оба игрока ходят с одного экрана. Передавайте устройство после ставки.",
-  "lobby.noteParty": "Luna оценивает каждый предмет и объясняет вердикт.",
+  "lobby.noteParty": "Pi оценивает каждый предмет и объясняет вердикт.",
   "lobby.notePower": "РЕЖИМ СИЛЫ · только каноничная сила: подвиги, официальные статы. Известность и симпатии не считаются.",
   "lobby.noteSports": "РЕЖИМ СТАТИСТИКИ · только результаты и статистика. Известность и зрелищность не считаются.",
   "lobby.noteTmdb": "TMDb · оценки зрителей по точному названию. Несовпадения помечаются, а не додумываются.",
-  "lobby.noteHuman": "Победителя выбирает ваш стол. Оценки Luna не используются.",
+  "lobby.noteHuman": "Победителя выбирает ваш стол. Оценки Pi не используются.",
   "lobby.start": "БРОСИТЬ МОНЕТУ",
   "lobby.judgeHuman": "СУДЬЯ — ВЫ",
   "lobby.seatsReady": "оба места заняты",
@@ -275,17 +275,17 @@ const ru: Dict = {
 
   // методы судейства
   "method.party":
-    "Luna оценивает каждый предмет по шкале 1–10: попадание в категорию, интерес для компании, повод поспорить. Ставки и остаток монет — контекст, не баллы.",
+    "Pi оценивает каждый предмет по шкале 1–10: попадание в категорию, интерес для компании, повод поспорить. Ставки и остаток монет — контекст, не баллы.",
   "method.power":
-    "РЕЖИМ СИЛЫ · Luna оценивает только каноничную боевую силу: подвиги, официальные характеристики, игровые статы. Категория, известность, внешность и развлекательность исключены.",
+    "РЕЖИМ СИЛЫ · Pi оценивает только каноничную боевую силу: подвиги, официальные характеристики, игровые статы. Категория, известность, внешность и развлекательность исключены.",
   "method.sports":
-    "РЕЖИМ СТАТИСТИКИ · Luna оценивает только спортивные результаты: статистику, рекорды, достижения, признанные рейтинги. Известность и зрелищность исключены.",
+    "РЕЖИМ СТАТИСТИКИ · Pi оценивает только спортивные результаты: статистику, рекорды, достижения, признанные рейтинги. Известность и зрелищность исключены.",
   "method.tmdb":
     "TMDb · оценки зрителей подтягиваются для точного названия и показываются как есть. Несовпавшие названия помечаются «без оценки» вместо придуманного числа.",
   "method.mock": "Тестовый режим: оценки сгенерированы локально, без обращения к модели.",
 
   // ярлыки судьи
-  "judge.luna": "✦ СУДЬЯ LUNA",
+  "judge.pi": "✦ СУДЬЯ PI",
   "judge.power": "✦ СИЛА",
   "judge.sports": "✦ СТАТИСТИКА",
   "judge.tmdb": "★ TMDb",
@@ -353,11 +353,11 @@ const en: Dict = {
   "lobby.tableFull": "TABLE FULL",
   "lobby.onDevice": "ON THIS DEVICE",
   "lobby.onDeviceNote": "Both players share one screen. Pass the device after each bid.",
-  "lobby.noteParty": "Luna rates every item and explains the verdict.",
+  "lobby.noteParty": "Pi rates every item and explains the verdict.",
   "lobby.notePower": "POWER MODE · canon strength only: feats and official stats. Fame and sympathy don't count.",
   "lobby.noteSports": "SPORTS MODE · results and statistics only. Fame and spectacle don't count.",
   "lobby.noteTmdb": "TMDb · audience scores for the exact title. Unmatched titles are flagged, never guessed.",
-  "lobby.noteHuman": "Your table picks the winner. Luna's ratings are not used.",
+  "lobby.noteHuman": "Your table picks the winner. Pi's ratings are not used.",
   "lobby.start": "FLIP FOR FIRST BID",
   "lobby.judgeHuman": "YOU JUDGE",
   "lobby.seatsReady": "both seats taken",
@@ -567,11 +567,11 @@ const en: Dict = {
   "results.verdictHumanShort": "{name} — the table's verdict.",
 
   "method.party":
-    "Luna rates each item 1–10: fit to the pack, appeal to the group, room for a good argument. Bids and leftover coins are context, not points.",
+    "Pi rates each item 1–10: fit to the pack, appeal to the group, room for a good argument. Bids and leftover coins are context, not points.",
   "method.power":
-    "POWER MODE · Luna rates canon combat strength only: feats, official stats, in-game numbers. Category fit, fame, looks and entertainment are excluded.",
+    "POWER MODE · Pi rates canon combat strength only: feats, official stats, in-game numbers. Category fit, fame, looks and entertainment are excluded.",
   "method.sports":
-    "SPORTS MODE · Luna rates sporting results only: stats, records, achievements, recognised rankings. Fame and spectacle are excluded.",
+    "SPORTS MODE · Pi rates sporting results only: stats, records, achievements, recognised rankings. Fame and spectacle are excluded.",
   "method.tmdb":
     "TMDb · audience scores are fetched for the exact title and shown as-is. Unmatched titles are marked unrated instead of guessed.",
   "method.mock": "Test mode: ratings generated locally, no model call.",

@@ -20,7 +20,7 @@
 | Клиент | Datastar 1.0.5 (вендор), `public/experience.js`, `public/sound.js` |
 | Стили | `public/style.css` (токены, база), `redesign.css` (лендинг, каталог), `stages.css` (торги) |
 | Данные | `packs.json` (222 пака), `judge-profiles.json`, SQLite `data/lot.db` |
-| Судья | OpenCodeGo (`gpt-6-luna`) + TMDb + mock |
+| Судья | OpenCodeGo (`deepseek-v4.1-flash`, персона Pi) + TMDb + mock |
 | Деплой | systemd `lot.service`, Caddy, Cloudflare |
 
 ## Структура
@@ -52,7 +52,7 @@ LOT_MOCK=1 bun run dev   # судья без внешних вызовов
 
 ```
 OPENCODEGO_BASE_URL=https://opencode.ai/inference/openai/v1
-OPENCODEGO_MODEL=gpt-6-luna
+OPENCODEGO_MODEL=deepseek-v4.1-flash
 OPENCODEGO_API_KEY=...
 TMDB_READ_ACCESS_TOKEN=...
 LOT_OPS_TOKEN=...        # необязательный: детали /health
@@ -113,7 +113,7 @@ bun run shots        # обновить screenshots/
 - Ставка: `opening` (1–5) или `+$1` к текущей; перебитая ставка возвращается.
 - Пас при чужой ставке отдаёт лот лидеру; два паса — лот пропущен.
 - Пятый пик закрывает драфт; оставшиеся лоты уходят второму игроку бесплатно.
-- Судья: `party` (Luna), `character-power` (только каноничная сила), `athlete-performance` (только статистика), `internet-ratings` (TMDb как есть).
+- Судья: `party` (Pi), `character-power` (только каноничная сила), `athlete-performance` (только статистика), `internet-ratings` (TMDb как есть).
 
 ## Инварианты
 

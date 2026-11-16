@@ -63,7 +63,7 @@ function units(t: (key: string) => string, lang: Lang, kind: "item" | "pack" | "
 }
 
 const AI_KEY: Record<string, string> = {
-  party: "judge.luna",
+  party: "judge.pi",
   "character-power": "judge.power",
   "athlete-performance": "judge.sports",
   "internet-ratings": "judge.tmdb",
@@ -952,7 +952,7 @@ function scorecard(view: View, index: 0 | 1) {
       </div>`
     : "";
 
-  const judgeName = view.profile === "internet-ratings" ? "TMDb" : view.review?.model === "mock" ? t("common.testMode") : "Luna";
+  const judgeName = view.profile === "internet-ratings" ? "TMDb" : view.review?.model === "mock" ? t("common.testMode") : "Pi";
   return `<article class="result-card">
     <h2><i class="player-color-dot player-color-dot--${index + 1}" aria-hidden="true"></i>${esc(player.name)}
       <span>${view.review ? esc(scoreLabel(view.profile, report?.score ?? 0, report?.ratedCount ?? 0)) : `${player.picks.length}/5`}</span>
