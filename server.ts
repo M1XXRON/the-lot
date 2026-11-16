@@ -4,7 +4,7 @@ import * as engine from "./src/engine.js";
 import * as content from "./src/content.js";
 import * as store from "./src/store.ts";
 import { judge, aiStatus, tmdbPoster, type DraftPayload } from "./src/ai.ts";
-import { historyPage, landingPage, roomPage, renderRoom, patchFragments, setAssetVersion, toast } from "./src/render.ts";
+import { catalogFragment, historyPage, landingPage, roomPage, renderRoom, patchFragments, setAssetVersion, toast } from "./src/render.ts";
 import { isLang, makeT, type Lang } from "./src/i18n.ts";
 
 const PORT = Number(process.env.PORT ?? 4173);
@@ -123,17 +123,6 @@ function html(body: string, status = 200, extra: Record<string, string> = {}) {
     status,
     headers: { ...SECURITY_HEADERS, "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store", ...extra },
   });
-}
-
-/**
- * Комната почти всегда одинакова между перезагрузками (каталог на 250 КБ),
- * поэтому отдаём её с ETag: браузер перепроверяет и получает 304 без тела.
- */
-function roomHtml(request: Request, body: string) {
-  const etag = `W/"${Bun.hash(body).toString(36)}"`;
-  const headers = { ...SECURITY_HEADERS, ETag: etag, "Cache-Control": "private, no-cache" };
-  if (request.headers.get("if-none-match") === etag) return new Response(null, { status: 304, headers });
-  return new Response(body, { status: 200, headers: { ...headers, "Content-Type": "text/html; charset=utf-8" } });
 }
 
 function json(value: unknown, status = 200, extra: Record<string, string> = {}) {
@@ -917,6 +906,19 @@ const server = Bun.serve({
       });
     }
 
+    if (path === "/catalog") {
+      // Каталог неизменяем: версия в ссылке, поэтому кеш на год и без cookie.
+      const lang: Lang = url.searchParams.get("lang") === "en" ? "en" : "ru";
+      const immutable = url.searchParams.get("v") === ASSET_VERSION;
+      return new Response(catalogFragment(lang), {
+        headers: {
+          ...SECURITY_HEADERS,
+          "Content-Type": "text/html; charset=utf-8",
+          "Cache-Control": immutable ? "public, max-age=31536000, immutable" : "public, max-age=300",
+        },
+      });
+    }
+
     if (path.startsWith("/public/")) {
       return serveStatic(path, url.searchParams.get("v"));
     }
@@ -1020,7 +1022,7 @@ const server = Bun.serve({
       libraryFor(room);
       const pageView: any = engine.view(room, sid, origin);
       pageView.lang = langOf(request);
-      return withSid(roomHtml(request, roomPage(pageView)));
+      return withSid(html(roomPage(pageView)));
     }
 
     if (path === "/favicon.ico") return new Response(null, { status: 204, headers: SECURITY_HEADERS });

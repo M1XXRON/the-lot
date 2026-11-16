@@ -1,5 +1,5 @@
 // Состояние → HTML. Фрагменты патчатся в браузер через Datastar (SSE).
-import { PICKS } from "./content.js";
+import { PICKS, packs as allPacks } from "./content.js";
 import { makeT, plural, type Lang } from "./i18n.ts";
 import { BANDS, TMDB, bandFor } from "./norms.ts";
 
@@ -582,6 +582,36 @@ function customPackCard(view: View) {
   return `${loaded}${library}${upload}`;
 }
 
+/**
+ * Каталог — единственная тяжёлая часть лобби (222 карточки, ~250 КБ).
+ * Отдаём его отдельным ответом с версией: он неизменяем, поэтому кешируется
+ * браузером и Cloudflare, а страница комнаты остаётся лёгкой.
+ */
+let catalogCache: { lang: Lang; version: string; html: string } | null = null;
+
+export function catalogFragment(lang: Lang) {
+  if (catalogCache && catalogCache.lang === lang && catalogCache.version === assetVersion) return catalogCache.html;
+  const t = makeT(lang);
+  const stub = { lang, pack: { id: "" }, spectator: false } as View;
+  const html = allPacks
+    .map((pack) =>
+      packCard(stub, {
+        id: pack.id,
+        name: pack.name,
+        emoji: pack.emoji,
+        tab: pack.tab,
+        count: pack.count,
+        profile: pack.profile,
+        verify: pack.verify,
+        inferred: pack.inferred,
+        search: `${pack.name} ${pack.tab} ${pack.items.join(" ")}`.toLowerCase(),
+      }),
+    )
+    .join("");
+  catalogCache = { lang, version: assetVersion, html };
+  return html;
+}
+
 function renderLobby(view: View) {
   const t = makeT((view.lang ?? "ru") as Lang);
   const chips = [
@@ -605,7 +635,7 @@ function renderLobby(view: View) {
     ${inviteCard(view)}
     <div class="custom-packs" id="custom-packs">${customPackCard(view)}</div>
     <p class="list-eyebrow" id="category-list-label" data-one="${esc(t("unit.pack.one"))}" data-few="${esc(t("unit.pack.few"))}" data-many="${esc(t("unit.pack.many"))}">${view.packs.length} ${esc(units(t, (view.lang ?? "ru") as Lang, "pack", view.packs.length))} · ${esc(t("tab.all"))}</p>
-    <div class="category-list" id="pack-grid">${view.packs.map((pack: any) => packCard(view, pack)).join("")}</div>
+    <div class="category-list" id="pack-grid" data-catalog="/catalog?lang=${esc((view.lang ?? "ru") as string)}&amp;v=${esc(assetVersion)}" data-selected="${esc(view.pack.id)}"></div>
     <p class="empty-categories" id="pack-empty" hidden>${esc(t("lobby.noMatches"))}</p>
   </div>
   ${lobbySide(view)}

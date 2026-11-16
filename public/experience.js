@@ -20,9 +20,44 @@ const normalize = (value) =>
     .replace(/\p{M}/gu, "")
     .toLowerCase();
 
-function applyCatalog() {
+/** Каталог приходит отдельным кешируемым ответом; ждём его, а не рисуем «пусто». */
+function catalogPending() {
+  const grid = document.getElementById("pack-grid");
+  return Boolean(grid && grid.dataset.catalog && grid.dataset.ready !== "1");
+}
+
+function markCatalogSelection() {
   const grid = document.getElementById("pack-grid");
   if (!grid) return;
+  const selected = grid.dataset.selected || "";
+  for (const card of grid.querySelectorAll(".category-card")) {
+    const active = Boolean(selected) && card.dataset.pack === selected;
+    card.classList.toggle("is-selected", active);
+    card.classList.toggle("selected", active);
+    card.setAttribute("aria-pressed", String(active));
+  }
+}
+
+async function fillCatalog() {
+  const grid = document.getElementById("pack-grid");
+  if (!grid || !grid.dataset.catalog || grid.dataset.ready === "1") return;
+  grid.dataset.ready = "1";
+  try {
+    const response = await fetch(grid.dataset.catalog);
+    if (!response.ok) throw new Error(String(response.status));
+    grid.innerHTML = await response.text();
+  } catch {
+    delete grid.dataset.ready;
+    return;
+  }
+  markCatalogSelection();
+  applyCatalog();
+  markChips();
+}
+
+function applyCatalog() {
+  const grid = document.getElementById("pack-grid");
+  if (!grid || catalogPending()) return;
   const label = document.getElementById("category-list-label");
   let shown = 0;
   for (const card of grid.querySelectorAll(".category-card")) {
@@ -210,6 +245,7 @@ function watchWinner() {
 
 document.addEventListener("DOMContentLoaded", () => {
   bind();
+  fillCatalog();
   applyCatalog();
   markChips();
   watchWinner();
@@ -221,6 +257,7 @@ document.addEventListener("DOMContentLoaded", () => {
     scheduled = true;
     requestAnimationFrame(() => {
       scheduled = false;
+      fillCatalog();
       applyCatalog();
       markChips();
       watchWinner();
