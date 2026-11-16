@@ -489,12 +489,7 @@ async function commonsCandidates(rawQuery: string, strict = false, matchItem = "
   url.searchParams.set("iiurlwidth", "240");
   url.searchParams.set("format", "json");
   url.searchParams.set("formatversion", "2");
-  const response = await fetch(url, {
-    headers: { "user-agent": IMAGE_UA, accept: "application/json" },
-    signal: AbortSignal.timeout(6000),
-  });
-  if (!response.ok) return [];
-  const body: any = await response.json().catch(() => null);
+  const body: any = await fetchJson(url, { "user-agent": IMAGE_UA, accept: "application/json" });
   const pages = Array.isArray(body?.query?.pages) ? body.query.pages : [];
   const out: CoverCandidate[] = [];
   for (const page of pages) {
@@ -783,6 +778,30 @@ async function verifyPicture(hash: string, item: string, pack: string, trusted =
 }
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
+/** JSON с одной повторной попыткой: источники иногда отвечают 429 под нагрузкой. */
+async function fetchJson(url: URL | string, headers: Record<string, string>, timeout = 6000) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(url, { headers, signal: AbortSignal.timeout(timeout) });
+      if (response.ok) return await response.json().catch(() => null);
+      if (response.status !== 429 && response.status < 500) return null;
+    } catch {
+      /* сеть моргнула — пробуем ещё раз */
+    }
+    if (attempt === 0) await Bun.sleep(800);
+  }
+  return null;
+}
+
+/** Фандомы не любят пачки запросов: не чаще одного в 350 мс. */
+let fandomLast = 0;
+
+async function fandomTick() {
+  const wait = fandomLast + 350 - Date.now();
+  if (wait > 0) await Bun.sleep(wait);
+  fandomLast = Date.now();
+}
+
 /** В фандоме берём только страницу самого персонажа, а не кроссовер «Punisher/Batman». */
 function fandomTitleMatch(item: string, title: string) {
   const clean = (value: string) => value.toLowerCase().replace(/\s+/g, " ").trim();
@@ -815,12 +834,10 @@ async function fandomPicture(name: string, hosts: string[]) {
     exactUrl.searchParams.set("format", "json");
     exactUrl.searchParams.set("formatversion", "2");
 
-    const exact = await fetch(exactUrl, {
-      headers: { "user-agent": IMAGE_UA, accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
-    if (exact?.ok) {
-      const body: any = await exact.json().catch(() => null);
+    await fandomTick();
+    const exactBody: any = await fetchJson(exactUrl, { "user-agent": IMAGE_UA, accept: "application/json" });
+    {
+      const body = exactBody;
       const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
       if (page?.thumbnail?.source && fandomTitleMatch(name, String(page.title ?? ""))) {
         const candidate = {
@@ -846,13 +863,9 @@ async function fandomPicture(name: string, hosts: string[]) {
     searchUrl.searchParams.set("pithumbsize", "400");
     searchUrl.searchParams.set("format", "json");
     searchUrl.searchParams.set("formatversion", "2");
-    const search = await fetch(searchUrl, {
-      headers: { "user-agent": IMAGE_UA, accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
-    if (!search?.ok) continue;
-    const body: any = await search.json().catch(() => null);
-    const pages = Array.isArray(body?.query?.pages) ? body.query.pages : [];
+    await fandomTick();
+    const searchBody: any = await fetchJson(searchUrl, { "user-agent": IMAGE_UA, accept: "application/json" });
+    const pages = Array.isArray(searchBody?.query?.pages) ? searchBody.query.pages : [];
     const best = pages.find((page: any) => page?.thumbnail?.source && fandomTitleMatch(name, String(page.title ?? "")));
     if (best) {
       const candidate = {
@@ -884,12 +897,7 @@ async function wikiLookup(query: string) {
     url.searchParams.set("redirects", "1");
     url.searchParams.set("format", "json");
     url.searchParams.set("formatversion", "2");
-    const response = await fetch(url, {
-      headers: { "user-agent": IMAGE_UA, accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
-    }).catch(() => null);
-    if (!response?.ok) continue;
-    const body: any = await response.json().catch(() => null);
+    const body: any = await fetchJson(url, { "user-agent": IMAGE_UA, accept: "application/json" });
     const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
     if (!page) continue;
     const thumb = page?.thumbnail;
@@ -1152,7 +1160,7 @@ async function warmLibrary() {
   library.done = 0;
   library.skipped = 0;
   library.startedAt = Date.now();
-  console.log(`[library] прогрев: ${unique.size} предметов, по одному в 0.5 с`);
+  console.log(`[library] прогрев: ${unique.size} предметов, по одному в 0.8 с`);
 
   let index = 0;
   for (const [key, { name, pack }] of unique) {
@@ -1169,7 +1177,7 @@ async function warmLibrary() {
     }
     library.done += 1;
     if (index % 100 === 0) console.log(`[library] ${index}/${unique.size}`);
-    await Bun.sleep(500);
+    await Bun.sleep(800);
   }
 
   library.running = false;
