@@ -771,9 +771,14 @@ Bun.serve({
             broadcast(room, "lobby");
           }
 
-          const initial: any = engine.view(room, sid, origin);
-          initial.lang = conn.lang;
-          send(conn, frame("#room", renderRoom(initial)));
+          // Если страница уже отрисована на этой версии комнаты, не дублируем
+          // каталог на 250 КБ: клиент догонит патчем при первом же изменении.
+          const clientVersion = Number(new URL(request.url ?? "/", "http://x").searchParams.get("v"));
+          if (!Number.isFinite(clientVersion) || clientVersion !== room.version) {
+            const initial: any = engine.view(room, sid, origin);
+            initial.lang = conn.lang;
+            send(conn, frame("#room", renderRoom(initial)));
+          }
           void ensureLotPoster(room);
           const keepAlive = setInterval(() => send(conn, ": ping\n\n"), 20_000);
           const cleanup = () => {

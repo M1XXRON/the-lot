@@ -2,6 +2,8 @@
 # Шаблон: deploy/vps/deploy.sh подставляет домен при установке.
 
 lot.bunker9.lol {
+	# Порядок важен: zstd предпочтительнее gzip (brotli в стоковом Caddy нет).
+	# text/event-stream Caddy не сжимает — SSE должен флашить чанки сразу.
 	encode zstd gzip
 	reverse_proxy 127.0.0.1:3102
 

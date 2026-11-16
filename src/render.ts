@@ -349,7 +349,7 @@ export function roomPage(view: View) {
   const t = makeT(lang);
   return `${head(`${view.pack.name} · The Lot`, lang)}
 <body data-sound="off">
-<main class="app-shell" id="app" data-init="@get('/stream', {retry: 'always', retryMaxWait: 5000, retryMaxCount: 100000})">
+<main class="app-shell" id="app" data-version="${view.version}" data-init="@get('/stream?v=${view.version}', {retry: 'always', retryMaxWait: 5000, retryMaxCount: 100000})">
 ${renderRoom(view)}
 </main>
 ${rulesDialog(t)}

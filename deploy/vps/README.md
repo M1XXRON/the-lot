@@ -66,6 +66,22 @@ ssh root@<IP сервера> 'systemctl stop lot && cp /opt/lot/app/data/lot.db*
 Без токена паки фильмов и сериалов отвечают «TMDb не настроен» — это ожидаемо.
 Ключи не попадают в браузер: клиент общается только со своим `/api`-подобным `/act/:cmd`.
 
+## Сжатие и SSE
+
+| Слой | Что сжимается | Порядок |
+| --- | --- | --- |
+| Caddy (origin) | CSS, JS, HTML, JSON | **zstd → gzip** (brotli в стоковом Caddy отсутствует) |
+| Cloudflare (edge) | то, что пришло несжатым | **brotli** — когда origin отдал `identity` |
+
+`text/event-stream` намеренно **не сжимается**: Caddy его пропускает, чтобы чанки уходили без буферизации. Проверка:
+
+```sh
+curl -sSI -H 'Accept-Encoding: zstd, br, gzip' https://lot.bunker9.lol/public/style.css   # gzip от CF
+curl -sS -D - -o /dev/null -N -b jar https://lot.bunker9.lol/stream                        # без content-encoding
+```
+
+Первичный патч больше не дублирует уже отрисованную страницу: `#app` несёт `data-version`, и `/stream?v=N` молчит, пока версия комнаты не изменится.
+
 ## Ограничения CSP
 
 Datastar исполняет выражения (`@post`, `data-*`) через `new Function`, поэтому в CSP есть
