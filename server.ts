@@ -474,7 +474,7 @@ function plainText(value: unknown, max = 80) {
     .slice(0, max);
 }
 
-async function commonsCandidates(rawQuery: string, strict = false): Promise<CoverCandidate[]> {
+async function commonsCandidates(rawQuery: string, strict = false, matchItem = ""): Promise<CoverCandidate[]> {
   const query = searchQuery(rawQuery);
   if (!query) return [];
   const url = new URL(COMMONS_API);
@@ -512,8 +512,9 @@ async function commonsCandidates(rawQuery: string, strict = false): Promise<Cove
     });
   }
   if (!strict) return out;
-  // Для карточек предметов берём только файлы, в названии которых есть сам предмет.
-  const wanted = tokensOf(query);
+  // Для карточек предметов берём только файлы, в названии которых есть сам предмет,
+  // а не слова из названия пака.
+  const wanted = tokensOf(searchQuery(matchItem || query));
   if (wanted.length === 0) return [];
   return out.filter((candidate) => {
     const got = tokensOf(candidate.title);
@@ -667,6 +668,14 @@ function searchQuery(name: string) {
     .slice(0, 80);
 }
 
+/** Поиск с контекстом пака: «Superheroes Rogue» вместо просто «Rogue». */
+function contextQuery(packName: string, item: string) {
+  const pack = searchQuery(packName);
+  const name = searchQuery(item);
+  if (!pack || !name) return name;
+  return `${pack} ${name}`.slice(0, 120);
+}
+
 async function anilistPictures(name: string, high = false) {
   const query = searchQuery(name);
   if (!query) return [];
@@ -730,8 +739,7 @@ async function verifyPicture(hash: string, item: string, pack: string, trusted =
 }
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
-async function wikiPicture(name: string) {
-  const query = searchQuery(name);
+async function wikiLookup(query: string) {
   if (!query) return null;
   for (const lang of ["ru", "en"]) {
     const url = new URL(WIKI_API.replace("{lang}", lang));
@@ -765,17 +773,30 @@ async function wikiPicture(name: string) {
   return null;
 }
 
+async function wikiPicture(name: string, packName = "") {
+  const withPack = await wikiLookup(contextQuery(packName, name));
+  if (withPack) return withPack;
+  return wikiLookup(searchQuery(name));
+}
+
 /**
  * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
  * кешируется, поэтому пак прогревается один раз на всех игроков.
  */
 type ImageCandidate = { url: string; author?: string; license?: string; page?: string; trusted?: boolean };
 
+/** Сначала ищем с названием пака, если пусто — по одному предмету. */
+async function commonsWithContext(name: string, packName: string): Promise<ImageCandidate[]> {
+  const withPack = await commonsCandidates(contextQuery(packName, name), true, name).catch(() => []);
+  if (withPack.length > 0) return withPack;
+  return commonsCandidates(searchQuery(name), true, name).catch(() => []);
+}
+
 /**
  * Первого кандидата отдаём сразу, остальных догружаем только если проверка
  * забракует: у аниме это ещё арт-варианты, затем статья и свободные фото.
  */
-async function primaryPicture(name: string, anime: boolean, high: boolean) {
+async function primaryPicture(name: string, anime: boolean, high: boolean, packName: string) {
   let extras: ImageCandidate[] = [];
   let loadExtras: (() => Promise<ImageCandidate[]>) | null = null;
 
@@ -786,22 +807,22 @@ async function primaryPicture(name: string, anime: boolean, high: boolean) {
       extras = rest;
       loadExtras = async () => {
         const list: ImageCandidate[] = [];
-        const wiki = await wikiPicture(name).catch(() => null);
+        const wiki = await wikiPicture(name, packName).catch(() => null);
         if (wiki) list.push(wiki);
-        list.push(...(await commonsCandidates(name, true).catch(() => [])).slice(0, 3));
+        list.push(...(await commonsWithContext(name, packName)).slice(0, 3));
         return list;
       };
       return { first: first!, extras, loadExtras };
     }
   }
 
-  const wiki = await wikiPicture(name).catch(() => null);
+  const wiki = await wikiPicture(name, packName).catch(() => null);
   if (wiki) {
-    loadExtras = async () => (await commonsCandidates(name, true).catch(() => [])).slice(0, 3);
+    loadExtras = async () => (await commonsWithContext(name, packName)).slice(0, 3);
     return { first: wiki, extras, loadExtras };
   }
 
-  const commons = await commonsCandidates(name, true).catch(() => []);
+  const commons = await commonsWithContext(name, packName);
   return { first: commons[0] ?? null, extras: commons.slice(1, 4), loadExtras: null };
 }
 
@@ -888,7 +909,7 @@ async function resolveItemPicture(name: string, anime = false, high = false, pac
 
   const job = autoSlot(async () => {
     try {
-      const { first, extras, loadExtras } = await primaryPicture(name, anime, high);
+      const { first, extras, loadExtras } = await primaryPicture(name, anime, high, packName);
       if (!first) {
         store.saveAutoMiss(key);
         return null;

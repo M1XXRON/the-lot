@@ -66,7 +66,7 @@ const PNG_ALT = makePng(120, 90);
 const imageSource = Bun.serve({
   port: 0,
   hostname: "127.0.0.1",
-  fetch(request) {
+  async fetch(request) {
     const url = new URL(request.url);
     if (url.pathname === "/cover.png") return new Response(PNG, { headers: { "content-type": "image/png" } });
     if (url.pathname === "/cover2.png") return new Response(PNG_ALT, { headers: { "content-type": "image/png" } });
@@ -74,29 +74,21 @@ const imageSource = Bun.serve({
     if (url.pathname === "/text") return new Response("not an image at all", { headers: { "content-type": "image/png" } });
     if (url.pathname === "/big") return new Response(new Uint8Array(7 * 1024 * 1024), { headers: { "content-type": "image/png" } });
     if (url.pathname === "/anilist") {
-      const body = {
-        data: {
-          Character: {
-            name: { full: "Soda" },
-            image: { large: `${IMAGE_BASE}/cover2.png` },
-            siteUrl: "https://anilist.co/character/1",
-          },
-        },
-      };
-      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+      const raw = await request.text().catch(() => "");
+      let q = "";
+      try { q = String(JSON.parse(raw)?.variables?.q ?? ""); } catch { /* пусто */ }
+      // настоящий AniList не находит персонажа, если в запросе есть название пака
+      const characters = q.toLowerCase().includes("anime characters")
+        ? []
+        : [{ name: { full: q || "Test" }, image: { large: `${IMAGE_BASE}/cover2.png` }, siteUrl: "https://anilist.co/character/1" }];
+      return new Response(JSON.stringify({ data: { Page: { characters } } }), { headers: { "content-type": "application/json" } });
     }
     if (url.pathname.endsWith("/w/api.php")) {
-      const body = {
-        query: {
-          pages: [
-            {
-              title: "Soda",
-              thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 },
-            },
-          ],
-        },
-      };
-      return new Response(JSON.stringify(body), { headers: { "content-type": "application/json" } });
+      const q = (url.searchParams.get("gsrsearch") || "").toLowerCase();
+      const pages = q.startsWith("soda ")
+        ? [{ title: "Soda", thumbnail: { source: `${IMAGE_BASE}/cover2.png`, width: 400, height: 600 } }]
+        : [];
+      return new Response(JSON.stringify({ query: { pages } }), { headers: { "content-type": "application/json" } });
     }
     if (url.pathname === "/commons") {
       const body = {
