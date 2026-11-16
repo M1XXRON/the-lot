@@ -8,6 +8,8 @@ export async function startServer({ port, mock = true, env = {} } = {}) {
   const chosenPort = port ?? 4400 + Math.floor(Math.random() * 400);
   const proc = Bun.spawn(["bun", "run", "server.ts"], {
     cwd: process.cwd(),
+    // Новая группа процессов: иначе kill убивает обёртку `bun run`, а сервер остаётся жить.
+    detached: true,
     env: {
       ...process.env,
       PORT: String(chosenPort),
@@ -45,7 +47,11 @@ export async function startServer({ port, mock = true, env = {} } = {}) {
   return {
     base,
     async stop() {
-      proc.kill();
+      try {
+        process.kill(-proc.pid, "SIGKILL");
+      } catch {
+        proc.kill();
+      }
       await Bun.sleep(60);
       try {
         rmSync(dbDir, { recursive: true, force: true });

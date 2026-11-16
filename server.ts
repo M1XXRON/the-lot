@@ -6,7 +6,7 @@ import { lookup } from "node:dns/promises";
 import * as engine from "./src/engine.js";
 import * as content from "./src/content.js";
 import * as store from "./src/store.ts";
-import { judge, aiStatus, tmdbPoster, type DraftPayload } from "./src/ai.ts";
+import { checkImage, imageCheckAvailable, judge, aiStatus, tmdbPoster, type DraftPayload } from "./src/ai.ts";
 import { catalogFragment, historyPage, landingPage, roomPage, renderRoom, patchFragments, setAssetVersion, toast } from "./src/render.ts";
 import { isLang, makeT, type Lang } from "./src/i18n.ts";
 
@@ -602,31 +602,65 @@ function tokensOf(value: string) {
     .filter((token) => token.length >= 3);
 }
 
-async function anilistPicture(name: string) {
+async function anilistPictures(name: string) {
   const query = name.replace(/\s+vs\.?\s+.*$/i, "").replace(/["'’]/g, "").trim().slice(0, 80);
-  if (!query) return null;
+  if (!query) return [];
   await anilistTick();
   const response = await fetch(ANILIST_API, {
     method: "POST",
     headers: { "content-type": "application/json", accept: "application/json", "user-agent": IMAGE_UA },
     body: JSON.stringify({
-      query: "query($q:String){Character(search:$q){name{full} image{large} siteUrl}}",
+      query: "query($q:String){Page(perPage:5){characters(search:$q){name{full} image{large} siteUrl}}}",
       variables: { q: query },
     }),
     signal: AbortSignal.timeout(7000),
   }).catch(() => null);
-  if (!response?.ok) return null;
+  if (!response?.ok) return [];
   const body: any = await response.json().catch(() => null);
-  const character = body?.data?.Character;
-  if (!character?.image?.large) return null;
+  const list = Array.isArray(body?.data?.Page?.characters) ? body.data.Page.characters : [];
   const wanted = tokensOf(query);
-  const got = tokensOf(String(character.name?.full ?? ""));
-  if (!wanted.some((token) => got.includes(token))) return null;
-  return {
-    url: String(character.image.large),
-    license: "AniList",
-    page: String(character.siteUrl ?? "https://anilist.co"),
-  };
+  return list
+    .filter((character: any) => character?.image?.large)
+    .filter((character: any) => {
+      const got = tokensOf(String(character.name?.full ?? ""));
+      return wanted.some((token) => got.includes(token));
+    })
+    .map((character: any) => ({
+      url: String(character.image.large),
+      license: "AniList",
+      page: String(character.siteUrl ?? "https://anilist.co"),
+      author: "",
+    }));
+}
+
+/** Адрес, по которому картинку увидит проверяющая модель: только наш публичный origin. */
+const PUBLIC_BASE = (process.env.LOT_PUBLIC_URL ?? "").replace(/\/+$/, "");
+const IMAGE_CHECK = PUBLIC_BASE.length > 0 && imageCheckAvailable() && process.env.LOT_IMAGE_CHECK !== "0";
+let checkSlots = 2;
+const checkWaiters: (() => void)[] = [];
+
+async function checkSlot<T>(run: () => Promise<T>): Promise<T> {
+  if (checkSlots <= 0) await new Promise<void>((resolve) => checkWaiters.push(resolve));
+  checkSlots -= 1;
+  try {
+    return await run();
+  } finally {
+    checkSlots += 1;
+    checkWaiters.shift()?.();
+  }
+}
+
+/**
+ * Смотрит на скачанную картинку глазами модели. Без публичного адреса
+ * или ключа проверка недоступна — тогда верим источникам (checker=heuristic).
+ */
+async function verifyPicture(hash: string, item: string, pack: string) {
+  if (!IMAGE_CHECK) return { ok: true, what: "", checker: "heuristic" };
+  const url = `${PUBLIC_BASE}/img/x/${hash}-342.webp`;
+  const verdict = await checkSlot(() => checkImage(url, item, pack)).catch(() => null);
+  if (!verdict) return { ok: true, what: "", checker: "heuristic" };
+  if (!verdict.ok) console.log(`[image] отклонено «${item}» (${pack}): ${verdict.what || "не то"}`);
+  return { ok: verdict.ok, what: verdict.what, checker: "vision" };
 }
 
 /** Статья Википедии с картинкой в карточке: сначала русская, потом английская. */
@@ -667,7 +701,7 @@ async function wikiPicture(name: string) {
  * Одна картинка на предмет: Википедия → Commons. Результат (в том числе промах)
  * кешируется, поэтому пак прогревается один раз на всех игроков.
  */
-async function resolveItemPicture(name: string, anime = false, high = false): Promise<string | null> {
+async function resolveItemPicture(name: string, anime = false, high = false, packName = ""): Promise<string | null> {
   if (!AUTO_ENABLED) return null;
   const key = autoKey(name);
   if (!key) return null;
@@ -679,30 +713,32 @@ async function resolveItemPicture(name: string, anime = false, high = false): Pr
 
   const job = autoSlot(async () => {
     try {
-      const animeArt = anime ? await anilistPicture(name).catch(() => null) : null;
-      if (animeArt) {
-        const image = await ingestImage(animeArt.url, "item", { license: animeArt.license, page: animeArt.page });
-        store.saveAutoImage(key, image.hash);
-        return image.hash;
-      }
+      // Кандидаты по порядку доверия: официальный арт, статья, свободные фото.
+      const candidates: { url: string; author?: string; license?: string; page?: string }[] = [];
+      if (anime) candidates.push(...(await anilistPictures(name).catch(() => [])));
       const wiki = await wikiPicture(name).catch(() => null);
-      if (wiki) {
-        const image = await ingestImage(wiki.url, "item", { license: wiki.license, page: wiki.page });
-        store.saveAutoImage(key, image.hash);
+      if (wiki) candidates.push(wiki);
+      const commons = await commonsCandidates(name).catch(() => []);
+      candidates.push(...commons.slice(0, 3));
+
+      let checks = 0;
+      for (const candidate of candidates.slice(0, 6)) {
+        const image = await ingestImage(candidate.url, "item", {
+          author: candidate.author,
+          license: candidate.license,
+          page: candidate.page,
+        });
+        // Не гоняем модель по кругу: три вердикта на предмет — потолок.
+        if (checks >= 3) break;
+        checks += 1;
+        const verdict = await verifyPicture(image.hash, name, packName);
+        if (!verdict.ok) continue;
+        store.saveAutoImage(key, image.hash, verdict.checker);
+        if (verdict.what) console.log(`[image] «${name}» ← ${verdict.what}`);
         return image.hash;
       }
-      const commons = (await commonsCandidates(name).catch(() => []))[0];
-      if (!commons) {
-        store.saveAutoMiss(key);
-        return null;
-      }
-      const image = await ingestImage(commons.url, "item", {
-        author: commons.author,
-        license: commons.license,
-        page: commons.page,
-      });
-      store.saveAutoImage(key, image.hash);
-      return image.hash;
+      store.saveAutoMiss(key);
+      return null;
     } catch {
       store.saveAutoMiss(key);
       return null;
@@ -741,7 +777,7 @@ async function prefetchPack(room: any) {
     for (;;) {
       const name = queue.shift();
       if (!name) return;
-      const hash = await resolveItemPicture(name, pack.tab === "ANIME");
+      const hash = await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name);
       if (!hash) continue;
       room.auto = { ...(room.auto ?? {}), [name]: hash };
       creditsFor(room);
@@ -780,7 +816,7 @@ async function ensureLotPicture(room: any) {
   if (room.items?.[pack.id]?.[lot.name] || room.auto?.[lot.name] || lot.poster) return;
   // Текущий лот — вне очереди прогрева и вне общей очереди источников.
   if (Array.isArray(room.prefetchQueue)) room.prefetchQueue.unshift(lot.name);
-  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true);
+  const hash = await resolveItemPicture(lot.name, pack.tab === "ANIME", true, pack.name);
   if (!hash) return;
   room.auto = { ...(room.auto ?? {}), [lot.name]: hash };
   creditsFor(room);

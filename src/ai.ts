@@ -412,6 +412,65 @@ function mockReview(payload: DraftPayload, profile: JudgeProfile, lang: JudgeLan
   };
 }
 
+/* ---------- проверка картинок ---------- */
+
+export type ImageVerdict = { ok: boolean; what: string };
+
+export function imageCheckAvailable() {
+  return !mock && Boolean(apiKey);
+}
+
+/**
+ * Смотрит на картинку и отвечает, тот ли это предмет.
+ * Возвращает null, если модель недоступна — тогда решает эвристика.
+ */
+export async function checkImage(url: string, item: string, pack: string, lang: JudgeLang = "ru"): Promise<ImageVerdict | null> {
+  if (mock || !apiKey) return null;
+  const question =
+    lang === "en"
+      ? `Image for the item "${item}" in the pack "${pack}". Answer with JSON only: {"ok":true|false,"what":"what is in the picture, 2-4 words"}. ok=true only if the picture really shows this item (or its obvious depiction), otherwise false.`
+      : `Картинка к предмету «${item}» в паке «${pack}». Ответь строго JSON: {"ok":true|false,"what":"что на картинке, 2–4 слова"}. ok=true только если на картинке действительно этот предмет (или его очевидное изображение), иначе false.`;
+
+  let response: Response;
+  try {
+    response = await fetch(`${baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        temperature: 0,
+        max_tokens: 300,
+        messages: [
+          { role: "system", content: "You check images for a two-player draft game. Answer with JSON only." },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: question },
+              { type: "image_url", image_url: { url } },
+            ],
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(12_000),
+    });
+  } catch {
+    return null;
+  }
+  if (!response.ok) return null;
+  const data: any = await response.json().catch(() => null);
+  const content = data?.choices?.[0]?.message?.content;
+  const text = Array.isArray(content) ? content.map((part: any) => part?.text ?? "").join("\n") : content;
+  if (typeof text !== "string" || text.length === 0) return null;
+  try {
+    const parsed = parseJson(text);
+    if (typeof parsed?.ok !== "boolean") return null;
+    const what = typeof parsed.what === "string" ? parsed.what.replace(/[\u0000-\u001f\u007f]/g, " ").slice(0, 80) : "";
+    return { ok: parsed.ok, what };
+  } catch {
+    return null;
+  }
+}
+
 /* ---------- публичное ---------- */
 
 export async function judge(

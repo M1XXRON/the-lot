@@ -72,6 +72,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS auto_items (
     name TEXT PRIMARY KEY,
     hash TEXT NOT NULL,
+    checker TEXT NOT NULL DEFAULT '',
     updated_at INTEGER NOT NULL
   );
 
@@ -94,6 +95,14 @@ db.exec(`
 try {
   const columns = db.query("PRAGMA table_info(games)").all() as { name: string }[];
   if (!columns.some((column) => column.name === "pids")) db.exec("ALTER TABLE games ADD COLUMN pids TEXT");
+} catch {
+  /* база только создана */
+}
+
+// Проверка картинок появилась позже: старые записи без метки считаем непроверенными.
+try {
+  const columns = db.query("PRAGMA table_info(auto_items)").all() as { name: string }[];
+  if (!columns.some((column) => column.name === "checker")) db.exec("ALTER TABLE auto_items ADD COLUMN checker TEXT NOT NULL DEFAULT ''");
 } catch {
   /* база только создана */
 }
@@ -306,9 +315,9 @@ const setItemStmt = db.prepare(
 );
 const dropItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ?");
 const dropOneItemStmt = db.prepare("DELETE FROM item_images WHERE owner = ? AND pack = ? AND item = ?");
-const autoItemStmt = db.prepare("SELECT hash FROM auto_items WHERE name = ?");
+const autoItemStmt = db.prepare("SELECT hash FROM auto_items WHERE name = ? AND checker != ''");
 const putAutoItemStmt = db.prepare(
-  "INSERT INTO auto_items (name, hash, updated_at) VALUES (?, ?, ?) ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
+  "INSERT INTO auto_items (name, hash, checker, updated_at) VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET hash = excluded.hash, checker = excluded.checker, updated_at = excluded.updated_at",
 );
 const autoMissStmt = db.prepare("SELECT updated_at FROM auto_misses WHERE name = ?");
 const putAutoMissStmt = db.prepare(
@@ -398,9 +407,9 @@ export function autoImage(name: string): string | null {
   return row?.hash ?? null;
 }
 
-/** @param {string} name @param {string} hash */
-export function saveAutoImage(name: string, hash: string) {
-  putAutoItemStmt.run(name, hash, Date.now());
+/** @param {string} name @param {string} hash @param {string} checker */
+export function saveAutoImage(name: string, hash: string, checker: string) {
+  putAutoItemStmt.run(name, hash, checker, Date.now());
   dropAutoMissStmt.run(name);
 }
 
