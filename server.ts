@@ -467,7 +467,7 @@ async function commonsCandidates(query: string): Promise<CoverCandidate[]> {
   url.searchParams.set("gsrlimit", "6");
   url.searchParams.set("prop", "imageinfo");
   url.searchParams.set("iiprop", "url|extmetadata|size");
-  url.searchParams.set("iiurlwidth", "342");
+  url.searchParams.set("iiurlwidth", "240");
   url.searchParams.set("format", "json");
   url.searchParams.set("formatversion", "2");
   const response = await fetch(url, {
@@ -532,17 +532,18 @@ async function findCovers(query: string): Promise<CoverCandidate[]> {
   let list = await commonsCandidates(query).catch(() => [] as CoverCandidate[]);
   if (list.length === 0) list = await openverseCandidates(query).catch(() => [] as CoverCandidate[]);
 
+  // Качаем кандидатов параллельно, но не ждём всех дольше трёх секунд:
+  // кто успел — тот и в ответе, остальные догонят кеш уже после.
   const ready: CoverCandidate[] = [];
-  await Promise.all(
-    list.map(async (candidate) => {
-      try {
-        const image = await ingestImage(candidate.thumb, "cover", candidate);
-        ready.push({ ...candidate, thumb: `/img/x/${image.hash}-192.webp` });
-      } catch {
-        /* кандидат не скачался — пропускаем */
-      }
-    }),
-  );
+  const jobs = list.map(async (candidate) => {
+    try {
+      const image = await ingestImage(candidate.thumb, "cover", candidate);
+      ready.push({ ...candidate, thumb: `/img/x/${image.hash}-192.webp` });
+    } catch {
+      /* кандидат не скачался — пропускаем */
+    }
+  });
+  await Promise.race([Promise.all(jobs), new Promise((resolve) => setTimeout(resolve, 3000))]);
   ready.sort((a, b) => list.findIndex((item) => item.url === a.url) - list.findIndex((item) => item.url === b.url));
 
   // Пустой ответ не кешируем: сеть могла моргнуть, попробуем в следующий раз.
