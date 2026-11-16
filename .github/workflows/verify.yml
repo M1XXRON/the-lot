@@ -28,6 +28,9 @@ jobs:
       - name: Typecheck
         run: bunx tsc --noEmit
 
+      - name: Scoring norms
+        run: bun tools/norms-check.mjs
+
       - name: Economy simulation
         run: bun run sim
 

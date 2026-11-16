@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { resolve } from "node:path";
+import { TMDB, weightedRating, normsPrompt } from "./norms.ts";
 
 export type JudgeProfile = "party" | "character-power" | "athlete-performance" | "internet-ratings";
 export type JudgeLang = "ru" | "en";
@@ -145,14 +146,22 @@ const athletePrompt = `Ты Luna — строгий судья спортивн�
 ${schema}`;
 
 function promptFor(profile: JudgeProfile, lang: JudgeLang) {
-  if (lang === "en") {
-    if (profile === "character-power") return powerPromptEn;
-    if (profile === "athlete-performance") return athletePromptEn;
-    return partyPromptEn;
-  }
-  if (profile === "character-power") return powerPrompt;
-  if (profile === "athlete-performance") return athletePrompt;
-  return partyPrompt;
+  const base =
+    lang === "en"
+      ? profile === "character-power"
+        ? powerPromptEn
+        : profile === "athlete-performance"
+          ? athletePromptEn
+          : partyPromptEn
+      : profile === "character-power"
+        ? powerPrompt
+        : profile === "athlete-performance"
+          ? athletePrompt
+          : partyPrompt;
+  const normsProfile =
+    profile === "character-power" ? "character-power" : profile === "athlete-performance" ? "athlete-performance" : "party";
+  const header = lang === "en" ? "Scoring norms (follow strictly):" : "Нормы оценивания (соблюдай строго):";
+  return `${base}\n\n${header}\n${normsPrompt(normsProfile, lang)}`;
 }
 
 function cleanText(value: unknown, max = 600) {
@@ -271,7 +280,7 @@ async function tmdbMatch(title: string, mediaType: "movie" | "tv"): Promise<Tmdb
   const date = String(match?.release_date ?? match?.first_air_date ?? "");
   const posterPath = typeof match?.poster_path === "string" ? match.poster_path.replace(/^\//, "") : null;
   const value: TmdbMatch | null =
-    !match || votes < 1 || !Number.isFinite(raw) || raw <= 0
+    !match || votes < TMDB.minVotes || !Number.isFinite(raw) || raw <= 0
       ? null
       : { rating: Math.round(raw * 10) / 10, votes, year: date.slice(0, 4), poster: posterPath };
   tmdbCache.set(key, { value, expires: Date.now() + WEEK });
@@ -290,13 +299,17 @@ function ratingLabelText(match: TmdbMatch | null, lang: JudgeLang) {
   if (!match) {
     return {
       rating: null,
-      basis: lang === "en" ? "No exact TMDb match" : "Нет точного совпадения в TMDb",
+      basis:
+        lang === "en"
+          ? `No exact TMDb match or fewer than ${TMDB.minVotes} votes`
+          : `Нет точного совпадения в TMDb или меньше ${TMDB.minVotes} голосов`,
       reason: lang === "en" ? "No score found — the item is excluded, not guessed." : "Оценка не найдена — предмет исключён, а не придуман.",
     } satisfies PickRating;
   }
+  const weighted = weightedRating(match.rating, match.votes);
   return {
-    rating: match.rating,
-    basis: `${match.votes.toLocaleString(locale)} ${word}${match.year ? ` · ${match.year}` : ""}`,
+    rating: weighted,
+    basis: `${match.rating.toFixed(1)} → ${weighted.toFixed(1)} · ${match.votes.toLocaleString(locale)} ${word}${match.year ? ` · ${match.year}` : ""}`,
     reason: "",
   } satisfies PickRating;
 }

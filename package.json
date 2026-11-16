@@ -21,6 +21,7 @@
     "verify": "bun tools/verify.mjs",
     "shots": "bun tools/shot.mjs",
     "sim": "bun tools/balance-sim.mjs",
+    "norms": "bun tools/norms-check.mjs",
     "build": "bun build ./server.ts --compile --bytecode --target=bun-linux-x64 --outfile dist/lot",
     "build:local": "bun build ./server.ts --compile --bytecode --outfile dist/lot-local",
     "start:bin": "./dist/lot"

@@ -13,6 +13,9 @@ const run = async (name, command) => {
 console.log("• типы (tsc --noEmit)");
 await run("types", ["bunx", "tsc", "--noEmit"]);
 
+console.log("• нормы оценивания (norms-check)");
+await run("norms", ["bun", "tools/norms-check.mjs"]);
+
 console.log("• экономика (balance-sim)");
 await run("sim", ["bun", "tools/balance-sim.mjs"]);
 

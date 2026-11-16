@@ -1,6 +1,7 @@
 // Состояние → HTML. Фрагменты патчатся в браузер через Datastar (SSE).
 import { PICKS } from "./content.js";
 import { makeT, plural, type Lang } from "./i18n.ts";
+import { BANDS, TMDB, bandFor } from "./norms.ts";
 
 type View = any;
 
@@ -747,7 +748,9 @@ function scorecard(view: View, index: 0 | 1) {
       return `<div class="result-pick">
         ${thumb(pick)}
         <span class="result-pick-name">${esc(pick.name)}</span>
-        <span class="result-pick-rating">${esc(ratingLabel(t, view.profile, note?.rating ?? pick.rating ?? null))}</span>
+        <span class="result-pick-rating" title="${esc(
+          bandFor(view.profile, note?.rating ?? pick.rating ?? null) ? t(`norms.band${BANDS.indexOf(bandFor(view.profile, note?.rating ?? pick.rating ?? null)!) + 1}`) : "",
+        )}">${esc(ratingLabel(t, view.profile, note?.rating ?? pick.rating ?? null))}</span>
         <span class="result-pick-price">${pick.auto ? "FREE" : money(pick.price)}</span>
         ${text ? `<span class="result-pick-reason">${esc(text)}</span>` : ""}
       </div>`;
@@ -773,6 +776,39 @@ function scorecard(view: View, index: 0 | 1) {
     ${notes}
     <div class="result-items">${picks}</div>
   </article>`;
+}
+
+function normsBlock(view: View) {
+  const t = makeT((view.lang ?? "ru") as Lang);
+  if (view.profile === "internet-ratings") {
+    return `<details class="norms">
+      <summary>${esc(t("norms.title"))} · TMDb</summary>
+      <p class="norms-hint">${esc(t("norms.tmdbScale"))}</p>
+      <ul class="norms-rules">
+        <li>${esc(t("norms.tmdb"))}</li>
+        <li>${esc(t("norms.tmdbMin"))}</li>
+      </ul>
+      <p class="norms-rule">${esc(t("norms.tmdbFlat"))}</p>
+    </details>`;
+  }
+  const prefix =
+    view.profile === "character-power" ? "norms.power" : view.profile === "athlete-performance" ? "norms.sports" : "norms.party";
+  return `<details class="norms">
+    <summary>${esc(t("norms.title"))}</summary>
+    <p class="norms-hint">${esc(t("norms.hint"))}</p>
+    <dl class="norms-bands">
+      ${BANDS.map(
+        (band, index) =>
+          `<div><dt>${esc(t(`norms.band${index + 1}`))}</dt><dd>${esc(t(`${prefix}${index + 1}`))}</dd></div>`,
+      ).join("")}
+    </dl>
+    <ul class="norms-rules">
+      <li>${esc(t("norms.ruleAverage"))}</li>
+      <li>${esc(t("norms.ruleSpread"))}</li>
+      <li>${esc(t("norms.ruleUnknown"))}</li>
+      <li>${esc(t("norms.rulePrice"))}</li>
+    </ul>
+  </details>`;
 }
 
 function analysis(view: View) {
@@ -857,6 +893,7 @@ function analysis(view: View) {
     <header class="analysis-heading"><p class="eyebrow">${esc(t("results.report"))}</p><h2 id="analysis-heading">${esc(t("results.reportTitle"))}</h2></header>
     <p class="analysis-method" id="analysis-method">${esc(method)}</p>
     <div class="analysis-summary" id="analysis-summary"><p>${esc(summary)}</p></div>
+    ${normsBlock(view)}
     ${
       retry
         ? `<div class="analysis-actions" id="analysis-actions">

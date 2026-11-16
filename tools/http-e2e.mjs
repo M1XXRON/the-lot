@@ -54,6 +54,8 @@ async function playLocal(server) {
   assert((results.html.match(/result-pick-rating/g) ?? []).length >= 10, "меньше десяти оценок");
   assert(results.html.includes("ПИКОВ"), "нет статистики партии");
   assert(results.html.includes("data-copy="), "нет кнопки копирования итога");
+  assert(results.html.includes("norms"), "нет блока норм оценивания");
+  assert(results.html.includes("1–2"), "в нормах нет нижней полосы");
 
   const again = await host.act("again");
   assert(again.status === 204, "повтор партии не сработал");
