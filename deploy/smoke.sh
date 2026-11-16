@@ -37,10 +37,11 @@ if [ -n "${LOT_OPS_TOKEN:-}" ]; then
 	echo "$ops" | grep -q '"db"' || { echo "  ✗ операторский health без деталей"; fail=1; }
 fi
 
-robots=$(curl -sS -m 12 "$BASE/robots.txt")
+# cache-buster: край Cloudflare может держать старую копию, проверяем origin
+robots=$(curl -sS -m 12 "$BASE/robots.txt?smoke=$(date +%s)")
 echo "$robots" | grep -q "sitemap.xml" || { echo "  ✗ robots без ссылки на sitemap"; fail=1; }
 
-sitemap=$(curl -sS -m 12 "$BASE/sitemap.xml")
+sitemap=$(curl -sS -m 12 "$BASE/sitemap.xml?smoke=$(date +%s)")
 echo "$sitemap" | grep -q "<loc>" || { echo "  ✗ sitemap без loc"; fail=1; }
 
 sw=$(curl -sS -m 12 "$BASE/sw.js")
