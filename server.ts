@@ -800,6 +800,8 @@ function fandomTitleMatch(item: string, title: string) {
 async function fandomPicture(name: string, hosts: string[]) {
   const wanted = searchQuery(name);
   if (!wanted) return null;
+  let fallback: ImageCandidate | null = null;
+  const exactName = (title: string) => title.toLowerCase().replace(/\s+/g, " ").trim() === wanted.toLowerCase();
 
   for (const host of hosts) {
     const base = `https://${host}.fandom.com/api.php`;
@@ -821,13 +823,16 @@ async function fandomPicture(name: string, hosts: string[]) {
       const body: any = await exact.json().catch(() => null);
       const page = (Array.isArray(body?.query?.pages) ? body.query.pages : [])[0];
       if (page?.thumbnail?.source && fandomTitleMatch(name, String(page.title ?? ""))) {
-        return {
+        const candidate = {
           url: String(page.thumbnail.source),
           title: String(page.title ?? wanted),
           page: `https://${host}.fandom.com/wiki/${encodeURIComponent(String(page.title ?? wanted).replace(/ /g, "_"))}`,
           license: host === "marvel" ? "Marvel Database" : "DC Database",
           trusted: true,
         };
+        // Точное имя персонажа важнее: «Batman» из DC, а не «Batman (Earth-34828)» из Marvel.
+        if (exactName(String(page.title ?? ""))) return candidate;
+        fallback ??= candidate;
       }
     }
 
@@ -850,16 +855,18 @@ async function fandomPicture(name: string, hosts: string[]) {
     const pages = Array.isArray(body?.query?.pages) ? body.query.pages : [];
     const best = pages.find((page: any) => page?.thumbnail?.source && fandomTitleMatch(name, String(page.title ?? "")));
     if (best) {
-      return {
+      const candidate = {
         url: String(best.thumbnail.source),
         title: String(best.title ?? wanted),
         page: `https://${host}.fandom.com/wiki/${encodeURIComponent(String(best.title ?? wanted).replace(/ /g, "_"))}`,
         license: host === "marvel" ? "Marvel Database" : "DC Database",
         trusted: true,
       };
+      if (exactName(String(best.title ?? ""))) return candidate;
+      fallback ??= candidate;
     }
   }
-  return null;
+  return fallback;
 }
 
 async function wikiLookup(query: string) {
@@ -1156,7 +1163,7 @@ async function warmLibrary() {
     }
     try {
       // Без vision: проверка случится при первом появлении лота на экране.
-      await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name, pack.tab, false);
+      await resolveItemPicture(name, pack.tab === "ANIME", false, pack.name, pack.tab, false, pack.id);
     } catch {
       /* пропускаем — вернёмся в следующем проходе */
     }
