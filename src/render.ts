@@ -523,11 +523,10 @@ function customPackCard(view: View) {
   return `<form class="custom-pack-card" id="custom-form" method="post" action="/act/custom" enctype="multipart/form-data">
     <span class="custom-pack-mark">${esc(t("custom.title"))}</span>
     <label class="custom-pack-file">
-      <input type="file" name="pack" accept="application/json,.json" required>
+      <input type="file" name="pack" accept="application/json,.json" required aria-label="${esc(t("custom.hint"))}" title="${esc(t("custom.hint"))}">
       <span>${esc(t("custom.choose"))}</span>
     </label>
     <button class="text-button" type="submit">${esc(t("custom.upload"))}</button>
-    <p class="custom-pack-hint">${esc(t("custom.hint"))}</p>
   </form>`;
 }
 

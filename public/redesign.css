@@ -294,7 +294,6 @@
     letter-spacing: 0.08em;
   }
   .custom-pack-file:hover span { border-color: var(--ink); }
-  .custom-pack-hint { flex: 1 1 100%; color: var(--muted); font-size: 0.64rem; line-height: 1.4; }
 
   /* Последние вердикты на лендинге */
   .verdicts {
